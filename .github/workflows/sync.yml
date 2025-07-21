@@ -1,0 +1,28 @@
+name: Sync Fork
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'  # 每 30 分钟同步一次
+  workflow_dispatch:  # 可选：允许手动触发
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Sync Fork
+        uses: actions/github-script@v6
+        with:
+          script: |
+            try {
+              await github.request('POST /repos/{owner}/{repo}/merge-upstream', {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                branch: 'master'  # 你的默认分支
+              })
+              console.log('Sync successful!')
+            } catch (error) {
+              console.error('Sync failed:', error)
+            }
