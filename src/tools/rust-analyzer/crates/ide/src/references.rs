@@ -138,7 +138,7 @@ pub(crate) fn find_all_refs(
                 Definition::Module(module) => {
                     Some(NavigationTarget::from_module_to_decl(sema.db, module))
                 }
-                def => def.try_to_nav(sema.db),
+                def => def.try_to_nav(sema),
             }
             .map(|nav| {
                 let (nav, extra_ref) = match nav.def_site {
@@ -1783,7 +1783,7 @@ trait Bar$0 = Foo where Self: ;
 fn foo<T: Bar>(_: impl Bar, _: &dyn Bar) {}
 "#,
             expect![[r#"
-                Bar TraitAlias FileId(0) 13..42 19..22
+                Bar Trait FileId(0) 13..42 19..22
 
                 FileId(0) 53..56
                 FileId(0) 66..69
@@ -3085,6 +3085,44 @@ fn main() {
                 FileId(0) 243..279
                 FileId(0) 308..341
                 FileId(0) 374..394
+            "#]],
+        );
+    }
+
+    #[test]
+    fn raw_labels_and_lifetimes() {
+        check(
+            r#"
+fn foo<'r#fn>(s: &'r#fn str) {
+    let _a: &'r#fn str = s;
+    let _b: &'r#fn str;
+    'r#break$0: {
+        break 'r#break;
+    }
+}
+        "#,
+            expect![[r#"
+                'r#break Label FileId(0) 87..96 87..95
+
+                FileId(0) 113..121
+            "#]],
+        );
+        check(
+            r#"
+fn foo<'r#fn$0>(s: &'r#fn str) {
+    let _a: &'r#fn str = s;
+    let _b: &'r#fn str;
+    'r#break: {
+        break 'r#break;
+    }
+}
+        "#,
+            expect![[r#"
+                'r#fn LifetimeParam FileId(0) 7..12
+
+                FileId(0) 18..23
+                FileId(0) 44..49
+                FileId(0) 72..77
             "#]],
         );
     }

@@ -83,9 +83,76 @@ pub struct TargetModifier {
     pub value_name: String,
 }
 
+mod target_modifier_consistency_check {
+    use super::*;
+    pub(super) fn sanitizer(l: &TargetModifier, r: Option<&TargetModifier>) -> bool {
+        let mut lparsed: SanitizerSet = Default::default();
+        let lval = if l.value_name.is_empty() { None } else { Some(l.value_name.as_str()) };
+        parse::parse_sanitizers(&mut lparsed, lval);
+
+        let mut rparsed: SanitizerSet = Default::default();
+        let rval = r.filter(|v| !v.value_name.is_empty()).map(|v| v.value_name.as_str());
+        parse::parse_sanitizers(&mut rparsed, rval);
+
+        // Some sanitizers need to be target modifiers, and some do not.
+        // For now, we should mark all sanitizers as target modifiers except for these:
+        // AddressSanitizer, LeakSanitizer
+        let tmod_sanitizers = SanitizerSet::MEMORY
+            | SanitizerSet::THREAD
+            | SanitizerSet::HWADDRESS
+            | SanitizerSet::CFI
+            | SanitizerSet::MEMTAG
+            | SanitizerSet::SHADOWCALLSTACK
+            | SanitizerSet::KCFI
+            | SanitizerSet::KERNELADDRESS
+            | SanitizerSet::SAFESTACK
+            | SanitizerSet::DATAFLOW;
+
+        lparsed & tmod_sanitizers == rparsed & tmod_sanitizers
+    }
+    pub(super) fn sanitizer_cfi_normalize_integers(
+        opts: &Options,
+        l: &TargetModifier,
+        r: Option<&TargetModifier>,
+    ) -> bool {
+        // For kCFI, the helper flag -Zsanitizer-cfi-normalize-integers should also be a target modifier
+        if opts.unstable_opts.sanitizer.contains(SanitizerSet::KCFI) {
+            if let Some(r) = r {
+                return l.extend().tech_value == r.extend().tech_value;
+            } else {
+                return false;
+            }
+        }
+        true
+    }
+}
+
 impl TargetModifier {
     pub fn extend(&self) -> ExtendedTargetModifierInfo {
         self.opt.reparse(&self.value_name)
+    }
+    // Custom consistency check for target modifiers (or default `l.tech_value == r.tech_value`)
+    // When other is None, consistency with default value is checked
+    pub fn consistent(&self, opts: &Options, other: Option<&TargetModifier>) -> bool {
+        assert!(other.is_none() || self.opt == other.unwrap().opt);
+        match self.opt {
+            OptionsTargetModifiers::UnstableOptions(unstable) => match unstable {
+                UnstableOptionsTargetModifiers::sanitizer => {
+                    return target_modifier_consistency_check::sanitizer(self, other);
+                }
+                UnstableOptionsTargetModifiers::sanitizer_cfi_normalize_integers => {
+                    return target_modifier_consistency_check::sanitizer_cfi_normalize_integers(
+                        opts, self, other,
+                    );
+                }
+                _ => {}
+            },
+            _ => {}
+        };
+        match other {
+            Some(other) => self.extend().tech_value == other.extend().tech_value,
+            None => false,
+        }
     }
 }
 
@@ -726,6 +793,7 @@ mod desc {
     pub(crate) const parse_list_with_polarity: &str =
         "a comma-separated list of strings, with elements beginning with + or -";
     pub(crate) const parse_autodiff: &str = "a comma separated list of settings: `Enable`, `PrintSteps`, `PrintTA`, `PrintTAFn`, `PrintAA`, `PrintPerf`, `PrintModBefore`, `PrintModAfter`, `PrintModFinal`, `PrintPasses`, `NoPostopt`, `LooseTypes`, `Inline`";
+    pub(crate) const parse_offload: &str = "a comma separated list of settings: `Enable`";
     pub(crate) const parse_comma_list: &str = "a comma-separated list of strings";
     pub(crate) const parse_opt_comma_list: &str = parse_comma_list;
     pub(crate) const parse_number: &str = "a number";
@@ -754,8 +822,7 @@ mod desc {
     pub(crate) const parse_linker_flavor: &str = ::rustc_target::spec::LinkerFlavorCli::one_of();
     pub(crate) const parse_dump_mono_stats: &str = "`markdown` (default) or `json`";
     pub(crate) const parse_instrument_coverage: &str = parse_bool;
-    pub(crate) const parse_coverage_options: &str =
-        "`block` | `branch` | `condition` | `mcdc` | `no-mir-spans`";
+    pub(crate) const parse_coverage_options: &str = "`block` | `branch` | `condition`";
     pub(crate) const parse_instrument_xray: &str = "either a boolean (`yes`, `no`, `on`, `off`, etc), or a comma separated list of settings: `always` or `never` (mutually exclusive), `ignore-loops`, `instruction-threshold=N`, `skip-entry`, `skip-exit`";
     pub(crate) const parse_unpretty: &str = "`string` or `string=string`";
     pub(crate) const parse_treat_err_as_bug: &str = "either no value or a non-negative number";
@@ -1295,7 +1362,7 @@ pub mod parse {
     }
 
     pub(crate) fn parse_linker_flavor(slot: &mut Option<LinkerFlavorCli>, v: Option<&str>) -> bool {
-        match v.and_then(LinkerFlavorCli::from_str) {
+        match v.and_then(|v| LinkerFlavorCli::from_str(v).ok()) {
             Some(lf) => *slot = Some(lf),
             _ => return false,
         }
@@ -1355,6 +1422,27 @@ pub mod parse {
             }
             Some(_) => false,
         }
+    }
+
+    pub(crate) fn parse_offload(slot: &mut Vec<Offload>, v: Option<&str>) -> bool {
+        let Some(v) = v else {
+            *slot = vec![];
+            return true;
+        };
+        let mut v: Vec<&str> = v.split(",").collect();
+        v.sort_unstable();
+        for &val in v.iter() {
+            let variant = match val {
+                "Enable" => Offload::Enable,
+                _ => {
+                    // FIXME(ZuseZ4): print an error saying which value is not recognized
+                    return false;
+                }
+            };
+            slot.push(variant);
+        }
+
+        true
     }
 
     pub(crate) fn parse_autodiff(slot: &mut Vec<AutoDiff>, v: Option<&str>) -> bool {
@@ -1437,8 +1525,6 @@ pub mod parse {
                 "block" => slot.level = CoverageLevel::Block,
                 "branch" => slot.level = CoverageLevel::Branch,
                 "condition" => slot.level = CoverageLevel::Condition,
-                "mcdc" => slot.level = CoverageLevel::Mcdc,
-                "no-mir-spans" => slot.no_mir_spans = true,
                 "discard-all-spans-in-codegen" => slot.discard_all_spans_in_codegen = true,
                 _ => return false,
             }
@@ -2146,8 +2232,8 @@ options! {
         "hash algorithm of source files used to check freshness in cargo (`blake3` or `sha256`)"),
     codegen_backend: Option<String> = (None, parse_opt_string, [TRACKED],
         "the backend to use"),
-    combine_cgu: bool = (false, parse_bool, [TRACKED],
-        "combine CGUs into a single one"),
+    codegen_source_order: bool = (false, parse_bool, [UNTRACKED],
+        "emit mono items in the order of spans in source files (default: no)"),
     contract_checks: Option<bool> = (None, parse_opt_bool, [TRACKED],
         "emit runtime checks for contract pre- and post-conditions (default: no)"),
     coverage_options: CoverageOptions = (CoverageOptions::default(), parse_coverage_options, [TRACKED],
@@ -2276,6 +2362,8 @@ options! {
         - hashes of green query instances
         - hash collisions of query keys
         - hash collisions when creating dep-nodes"),
+    indirect_branch_cs_prefix: bool = (false, parse_bool, [TRACKED TARGET_MODIFIER],
+        "add `cs` prefix to `call` and `jmp` to indirect thunks (default: no)"),
     inline_llvm: bool = (true, parse_bool, [TRACKED],
         "enable LLVM inlining (default: yes)"),
     inline_mir: Option<bool> = (None, parse_opt_bool, [TRACKED],
@@ -2401,6 +2489,11 @@ options! {
         "do not use unique names for text and data sections when -Z function-sections is used"),
     normalize_docs: bool = (false, parse_bool, [TRACKED],
         "normalize associated items in rustdoc when generating documentation"),
+    offload: Vec<crate::config::Offload> = (Vec::new(), parse_offload, [TRACKED],
+        "a list of offload flags to enable
+        Mandatory setting:
+        `=Enable`
+        Currently the only option available"),
     on_broken_pipe: OnBrokenPipe = (OnBrokenPipe::Default, parse_on_broken_pipe, [TRACKED],
         "behavior of std::io::ErrorKind::BrokenPipe (SIGPIPE)"),
     oom: OomStrategy = (OomStrategy::Abort, parse_oom_strategy, [TRACKED],
@@ -2478,13 +2571,13 @@ written to standard error output)"),
     retpoline_external_thunk: bool = (false, parse_bool, [TRACKED TARGET_MODIFIER],
         "enables retpoline-external-thunk, retpoline-indirect-branches and retpoline-indirect-calls \
         target features (default: no)"),
-    sanitizer: SanitizerSet = (SanitizerSet::empty(), parse_sanitizers, [TRACKED],
+    sanitizer: SanitizerSet = (SanitizerSet::empty(), parse_sanitizers, [TRACKED TARGET_MODIFIER],
         "use a sanitizer"),
     sanitizer_cfi_canonical_jump_tables: Option<bool> = (Some(true), parse_opt_bool, [TRACKED],
         "enable canonical jump tables (default: yes)"),
     sanitizer_cfi_generalize_pointers: Option<bool> = (None, parse_opt_bool, [TRACKED],
         "enable generalizing pointer types (default: no)"),
-    sanitizer_cfi_normalize_integers: Option<bool> = (None, parse_opt_bool, [TRACKED],
+    sanitizer_cfi_normalize_integers: Option<bool> = (None, parse_opt_bool, [TRACKED TARGET_MODIFIER],
         "enable normalizing integer types (default: no)"),
     sanitizer_dataflow_abilist: Vec<String> = (Vec::new(), parse_comma_list, [TRACKED],
         "additional ABI list files that control how shadow parameters are passed (comma separated)"),

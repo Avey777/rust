@@ -32,11 +32,13 @@
 
 use std::path::Path;
 
+use crate::diagnostics::{CheckId, DiagCtx, RunningCheck};
 use crate::walk::{filter_dirs, walk};
 
 // Paths that may contain platform-specific code.
 const EXCEPTION_PATHS: &[&str] = &[
     "library/compiler-builtins",
+    "library/std_detect",
     "library/windows_targets",
     "library/panic_abort",
     "library/panic_unwind",
@@ -52,6 +54,7 @@ const EXCEPTION_PATHS: &[&str] = &[
     // core::ffi contains platform-specific type and linkage configuration
     "library/core/src/ffi/mod.rs",
     "library/core/src/ffi/primitives.rs",
+    "library/core/src/os", // Platform-specific public interfaces
     "library/std/src/sys", // Platform-specific code for std lives here.
     "library/std/src/os",  // Platform-specific public interfaces
     // Temporary `std` exceptions
@@ -65,7 +68,9 @@ const EXCEPTION_PATHS: &[&str] = &[
     "library/std/src/io/error.rs", // Repr unpacked needed for UEFI
 ];
 
-pub fn check(path: &Path, bad: &mut bool) {
+pub fn check(path: &Path, diag_ctx: DiagCtx) {
+    let mut check = diag_ctx.start_check(CheckId::new("pal").path(path));
+
     // Sanity check that the complex parsing here works.
     let mut saw_target_arch = false;
     let mut saw_cfg_bang = false;
@@ -86,7 +91,7 @@ pub fn check(path: &Path, bad: &mut bool) {
             return;
         }
 
-        check_cfgs(contents, file, bad, &mut saw_target_arch, &mut saw_cfg_bang);
+        check_cfgs(contents, file, &mut check, &mut saw_target_arch, &mut saw_cfg_bang);
     });
 
     assert!(saw_target_arch);
@@ -96,7 +101,7 @@ pub fn check(path: &Path, bad: &mut bool) {
 fn check_cfgs(
     contents: &str,
     file: &Path,
-    bad: &mut bool,
+    check: &mut RunningCheck,
     saw_target_arch: &mut bool,
     saw_cfg_bang: &mut bool,
 ) {
@@ -113,7 +118,7 @@ fn check_cfgs(
             Ok(_) => unreachable!(),
             Err(i) => i + 1,
         };
-        tidy_error!(bad, "{}:{}: platform-specific cfg: {}", file.display(), line, cfg);
+        check.error(format!("{}:{line}: platform-specific cfg: {cfg}", file.display()));
     };
 
     for (idx, cfg) in cfgs {

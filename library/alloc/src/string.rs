@@ -265,12 +265,12 @@ use crate::vec::{self, Vec};
 /// You can look at these with the [`as_ptr`], [`len`], and [`capacity`]
 /// methods:
 ///
+// FIXME Update this when vec_into_raw_parts is stabilized
 /// ```
 /// use std::mem;
 ///
 /// let story = String::from("Once upon a time...");
 ///
-// FIXME Update this when vec_into_raw_parts is stabilized
 /// // Prevent automatically dropping the String's data
 /// let mut story = mem::ManuallyDrop::new(story);
 ///
@@ -787,12 +787,12 @@ impl String {
     #[cfg(not(no_global_oom_handling))]
     #[unstable(feature = "str_from_utf16_endian", issue = "116258")]
     pub fn from_utf16le(v: &[u8]) -> Result<String, FromUtf16Error> {
-        if v.len() % 2 != 0 {
+        let (chunks, []) = v.as_chunks::<2>() else {
             return Err(FromUtf16Error(()));
-        }
+        };
         match (cfg!(target_endian = "little"), unsafe { v.align_to::<u16>() }) {
             (true, ([], v, [])) => Self::from_utf16(v),
-            _ => char::decode_utf16(v.array_chunks::<2>().copied().map(u16::from_le_bytes))
+            _ => char::decode_utf16(chunks.iter().copied().map(u16::from_le_bytes))
                 .collect::<Result<_, _>>()
                 .map_err(|_| FromUtf16Error(())),
         }
@@ -830,11 +830,11 @@ impl String {
             (true, ([], v, [])) => Self::from_utf16_lossy(v),
             (true, ([], v, [_remainder])) => Self::from_utf16_lossy(v) + "\u{FFFD}",
             _ => {
-                let mut iter = v.array_chunks::<2>();
-                let string = char::decode_utf16(iter.by_ref().copied().map(u16::from_le_bytes))
+                let (chunks, remainder) = v.as_chunks::<2>();
+                let string = char::decode_utf16(chunks.iter().copied().map(u16::from_le_bytes))
                     .map(|r| r.unwrap_or(char::REPLACEMENT_CHARACTER))
                     .collect();
-                if iter.remainder().is_empty() { string } else { string + "\u{FFFD}" }
+                if remainder.is_empty() { string } else { string + "\u{FFFD}" }
             }
         }
     }
@@ -862,12 +862,12 @@ impl String {
     #[cfg(not(no_global_oom_handling))]
     #[unstable(feature = "str_from_utf16_endian", issue = "116258")]
     pub fn from_utf16be(v: &[u8]) -> Result<String, FromUtf16Error> {
-        if v.len() % 2 != 0 {
+        let (chunks, []) = v.as_chunks::<2>() else {
             return Err(FromUtf16Error(()));
-        }
+        };
         match (cfg!(target_endian = "big"), unsafe { v.align_to::<u16>() }) {
             (true, ([], v, [])) => Self::from_utf16(v),
-            _ => char::decode_utf16(v.array_chunks::<2>().copied().map(u16::from_be_bytes))
+            _ => char::decode_utf16(chunks.iter().copied().map(u16::from_be_bytes))
                 .collect::<Result<_, _>>()
                 .map_err(|_| FromUtf16Error(())),
         }
@@ -905,11 +905,11 @@ impl String {
             (true, ([], v, [])) => Self::from_utf16_lossy(v),
             (true, ([], v, [_remainder])) => Self::from_utf16_lossy(v) + "\u{FFFD}",
             _ => {
-                let mut iter = v.array_chunks::<2>();
-                let string = char::decode_utf16(iter.by_ref().copied().map(u16::from_be_bytes))
+                let (chunks, remainder) = v.as_chunks::<2>();
+                let string = char::decode_utf16(chunks.iter().copied().map(u16::from_be_bytes))
                     .map(|r| r.unwrap_or(char::REPLACEMENT_CHARACTER))
                     .collect();
-                if iter.remainder().is_empty() { string } else { string + "\u{FFFD}" }
+                if remainder.is_empty() { string } else { string + "\u{FFFD}" }
             }
         }
     }
@@ -970,13 +970,13 @@ impl String {
     ///
     /// # Examples
     ///
+    // FIXME Update this when vec_into_raw_parts is stabilized
     /// ```
     /// use std::mem;
     ///
     /// unsafe {
     ///     let s = String::from("hello");
     ///
-    // FIXME Update this when vec_into_raw_parts is stabilized
     ///     // Prevent automatically dropping the String's data
     ///     let mut s = mem::ManuallyDrop::new(s);
     ///
@@ -1117,8 +1117,8 @@ impl String {
     ///
     /// # Panics
     ///
-    /// Panics if the starting point or end point do not lie on a [`char`]
-    /// boundary, or if they're out of bounds.
+    /// Panics if the range has `start_bound > end_bound`, or, if the range is
+    /// bounded on either end and does not lie on a [`char`] boundary.
     ///
     /// # Examples
     ///
@@ -1939,8 +1939,8 @@ impl String {
     ///
     /// # Panics
     ///
-    /// Panics if the starting point or end point do not lie on a [`char`]
-    /// boundary, or if they're out of bounds.
+    /// Panics if the range has `start_bound > end_bound`, or, if the range is
+    /// bounded on either end and does not lie on a [`char`] boundary.
     ///
     /// # Leaking
     ///
@@ -2050,8 +2050,8 @@ impl String {
     ///
     /// # Panics
     ///
-    /// Panics if the starting point or end point do not lie on a [`char`]
-    /// boundary, or if they're out of bounds.
+    /// Panics if the range has `start_bound > end_bound`, or, if the range is
+    /// bounded on either end and does not lie on a [`char`] boundary.
     ///
     /// # Examples
     ///
@@ -2285,20 +2285,10 @@ impl fmt::Display for FromUtf16Error {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl Error for FromUtf8Error {
-    #[allow(deprecated)]
-    fn description(&self) -> &str {
-        "invalid utf-8"
-    }
-}
+impl Error for FromUtf8Error {}
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl Error for FromUtf16Error {
-    #[allow(deprecated)]
-    fn description(&self) -> &str {
-        "invalid utf-16"
-    }
-}
+impl Error for FromUtf16Error {}
 
 #[cfg(not(no_global_oom_handling))]
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -2949,68 +2939,41 @@ impl SpecToString for i8 {
     }
 }
 
-// Generic/generated code can sometimes have multiple, nested references
-// for strings, including `&&&str`s that would never be written
-// by hand. This macro generates twelve layers of nested `&`-impl
-// for primitive strings.
-#[cfg(not(no_global_oom_handling))]
-macro_rules! to_string_str_wrap_in_ref {
-    {x $($x:ident)*} => {
-        &to_string_str_wrap_in_ref! { $($x)* }
-    };
-    {} => { str };
-}
-#[cfg(not(no_global_oom_handling))]
-macro_rules! to_string_expr_wrap_in_deref {
-    {$self:expr ; x $($x:ident)*} => {
-        *(to_string_expr_wrap_in_deref! { $self ; $($x)* })
-    };
-    {$self:expr ;} => { $self };
-}
 #[cfg(not(no_global_oom_handling))]
 macro_rules! to_string_str {
-    {$($($x:ident)*),+} => {
+    {$($type:ty,)*} => {
         $(
-            impl SpecToString for to_string_str_wrap_in_ref!($($x)*) {
+            impl SpecToString for $type {
                 #[inline]
                 fn spec_to_string(&self) -> String {
-                    String::from(to_string_expr_wrap_in_deref!(self ; $($x)*))
+                    let s: &str = self;
+                    String::from(s)
                 }
             }
-        )+
+        )*
     };
 }
 
 #[cfg(not(no_global_oom_handling))]
 to_string_str! {
-    x x x x x x x x x x x x,
-    x x x x x x x x x x x,
-    x x x x x x x x x x,
-    x x x x x x x x x,
-    x x x x x x x x,
-    x x x x x x x,
-    x x x x x x,
-    x x x x x,
-    x x x x,
-    x x x,
-    x x,
-    x,
-}
-
-#[cfg(not(no_global_oom_handling))]
-impl SpecToString for Cow<'_, str> {
-    #[inline]
-    fn spec_to_string(&self) -> String {
-        self[..].to_owned()
-    }
-}
-
-#[cfg(not(no_global_oom_handling))]
-impl SpecToString for String {
-    #[inline]
-    fn spec_to_string(&self) -> String {
-        self.to_owned()
-    }
+    Cow<'_, str>,
+    String,
+    // Generic/generated code can sometimes have multiple, nested references
+    // for strings, including `&&&str`s that would never be written
+    // by hand.
+    &&&&&&&&&&&&str,
+    &&&&&&&&&&&str,
+    &&&&&&&&&&str,
+    &&&&&&&&&str,
+    &&&&&&&&str,
+    &&&&&&&str,
+    &&&&&&str,
+    &&&&&str,
+    &&&&str,
+    &&&str,
+    &&str,
+    &str,
+    str,
 }
 
 #[cfg(not(no_global_oom_handling))]

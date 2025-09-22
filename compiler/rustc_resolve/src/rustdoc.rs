@@ -207,8 +207,10 @@ pub fn attrs_to_doc_fragments<'a, A: AttributeExt + Clone + 'a>(
     attrs: impl Iterator<Item = (&'a A, Option<DefId>)>,
     doc_only: bool,
 ) -> (Vec<DocFragment>, ThinVec<A>) {
-    let mut doc_fragments = Vec::new();
-    let mut other_attrs = ThinVec::<A>::new();
+    let (min_size, max_size) = attrs.size_hint();
+    let size_hint = max_size.unwrap_or(min_size);
+    let mut doc_fragments = Vec::with_capacity(size_hint);
+    let mut other_attrs = ThinVec::<A>::with_capacity(if doc_only { 0 } else { size_hint });
     for (attr, item_id) in attrs {
         if let Some((doc_str, comment_kind)) = attr.doc_str_and_comment_kind() {
             let doc = beautify_doc_string(doc_str, comment_kind);
@@ -229,6 +231,9 @@ pub fn attrs_to_doc_fragments<'a, A: AttributeExt + Clone + 'a>(
             other_attrs.push(attr.clone());
         }
     }
+
+    doc_fragments.shrink_to_fit();
+    other_attrs.shrink_to_fit();
 
     unindent_doc_fragments(&mut doc_fragments);
 
@@ -368,8 +373,8 @@ pub fn inner_docs(attrs: &[impl AttributeExt]) -> bool {
     true
 }
 
-/// Has `#[rustc_doc_primitive]` or `#[doc(keyword)]`.
-pub fn has_primitive_or_keyword_docs(attrs: &[impl AttributeExt]) -> bool {
+/// Has `#[rustc_doc_primitive]` or `#[doc(keyword)]` or `#[doc(attribute)]`.
+pub fn has_primitive_or_keyword_or_attribute_docs(attrs: &[impl AttributeExt]) -> bool {
     for attr in attrs {
         if attr.has_name(sym::rustc_doc_primitive) {
             return true;
@@ -377,7 +382,7 @@ pub fn has_primitive_or_keyword_docs(attrs: &[impl AttributeExt]) -> bool {
             && let Some(items) = attr.meta_item_list()
         {
             for item in items {
-                if item.has_name(sym::keyword) {
+                if item.has_name(sym::keyword) || item.has_name(sym::attribute) {
                     return true;
                 }
             }
@@ -509,9 +514,8 @@ fn collect_link_data<'input, F: BrokenLinkCallback<'input>>(
     display_text.map(String::into_boxed_str)
 }
 
-/// Returns a tuple containing a span encompassing all the document fragments and a boolean that is
-/// `true` if any of the fragments are from a macro expansion.
-pub fn span_of_fragments_with_expansion(fragments: &[DocFragment]) -> Option<(Span, bool)> {
+/// Returns a span encompassing all the document fragments.
+pub fn span_of_fragments(fragments: &[DocFragment]) -> Option<Span> {
     let (first_fragment, last_fragment) = match fragments {
         [] => return None,
         [first, .., last] => (first, last),
@@ -520,15 +524,7 @@ pub fn span_of_fragments_with_expansion(fragments: &[DocFragment]) -> Option<(Sp
     if first_fragment.span == DUMMY_SP {
         return None;
     }
-    Some((
-        first_fragment.span.to(last_fragment.span),
-        fragments.iter().any(|frag| frag.from_expansion),
-    ))
-}
-
-/// Returns a span encompassing all the document fragments.
-pub fn span_of_fragments(fragments: &[DocFragment]) -> Option<Span> {
-    span_of_fragments_with_expansion(fragments).map(|(sp, _)| sp)
+    Some(first_fragment.span.to(last_fragment.span))
 }
 
 /// Attempts to match a range of bytes from parsed markdown to a `Span` in the source code.
@@ -686,7 +682,7 @@ pub fn source_span_for_markdown_range_inner(
         }
     }
 
-    let (span, _) = span_of_fragments_with_expansion(fragments)?;
+    let span = span_of_fragments(fragments)?;
     let src_span = span.from_inner(InnerSpan::new(
         md_range.start + start_bytes,
         md_range.end + start_bytes + end_bytes,

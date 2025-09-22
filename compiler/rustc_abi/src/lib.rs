@@ -63,6 +63,8 @@ mod tests;
 
 pub use callconv::{Heterogeneous, HomogeneousAggregate, Reg, RegKind};
 pub use canon_abi::{ArmCall, CanonAbi, InterruptKind, X86Call};
+#[cfg(feature = "nightly")]
+pub use extern_abi::CVariadicStatus;
 pub use extern_abi::{ExternAbi, all_names};
 #[cfg(feature = "nightly")]
 pub use layout::{FIRST_VARIANT, FieldIdx, Layout, TyAbiInterface, TyAndLayout, VariantIdx};
@@ -315,7 +317,7 @@ pub enum TargetDataLayoutErrors<'a> {
     MissingAlignment { cause: &'a str },
     InvalidAlignment { cause: &'a str, err: AlignFromBytesError },
     InconsistentTargetArchitecture { dl: &'a str, target: &'a str },
-    InconsistentTargetPointerWidth { pointer_size: u64, target: u32 },
+    InconsistentTargetPointerWidth { pointer_size: u64, target: u16 },
     InvalidBitsSize { err: String },
     UnknownPointerSpecification { err: String },
 }
@@ -1205,6 +1207,19 @@ impl Integer {
         }
     }
 
+    /// Returns the smallest signed value that can be represented by this Integer.
+    #[inline]
+    pub fn signed_min(self) -> i128 {
+        use Integer::*;
+        match self {
+            I8 => i8::MIN as i128,
+            I16 => i16::MIN as i128,
+            I32 => i32::MIN as i128,
+            I64 => i64::MIN as i128,
+            I128 => i128::MIN,
+        }
+    }
+
     /// Finds the smallest Integer type which can represent the signed value.
     #[inline]
     pub fn fit_signed(x: i128) -> Integer {
@@ -1373,6 +1388,28 @@ impl WrappingRange {
             self.start <= v && v <= self.end
         } else {
             self.start <= v || v <= self.end
+        }
+    }
+
+    /// Returns `true` if all the values in `other` are contained in this range,
+    /// when the values are considered as having width `size`.
+    #[inline(always)]
+    pub fn contains_range(&self, other: Self, size: Size) -> bool {
+        if self.is_full_for(size) {
+            true
+        } else {
+            let trunc = |x| size.truncate(x);
+
+            let delta = self.start;
+            let max = trunc(self.end.wrapping_sub(delta));
+
+            let other_start = trunc(other.start.wrapping_sub(delta));
+            let other_end = trunc(other.end.wrapping_sub(delta));
+
+            // Having shifted both input ranges by `delta`, now we only need to check
+            // whether `0..=max` contains `other_start..=other_end`, which can only
+            // happen if the other doesn't wrap since `self` isn't everything.
+            (other_start <= other_end) && (other_end <= max)
         }
     }
 

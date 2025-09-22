@@ -232,9 +232,7 @@ where
             Q::in_any_value_of_ty(cx, rvalue.ty(cx.body, cx.tcx))
         }
 
-        Rvalue::Discriminant(place) | Rvalue::Len(place) => {
-            in_place::<Q, _>(cx, in_local, place.as_ref())
-        }
+        Rvalue::Discriminant(place) => in_place::<Q, _>(cx, in_local, place.as_ref()),
 
         Rvalue::CopyForDeref(place) => in_place::<Q, _>(cx, in_local, place.as_ref()),
 
@@ -369,7 +367,7 @@ where
         assert!(promoted.is_none() || Q::ALLOW_PROMOTED);
 
         // Don't peek inside trait associated constants.
-        if promoted.is_none() && cx.tcx.trait_of_item(def).is_none() {
+        if promoted.is_none() && cx.tcx.trait_of_assoc(def).is_none() {
             let qualifs = cx.tcx.at(constant.span).mir_const_qualif(def);
 
             if !Q::in_qualifs(&qualifs) {

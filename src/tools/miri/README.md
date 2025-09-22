@@ -220,7 +220,7 @@ degree documented below):
   - `solaris` / `illumos`: maintained by @devnexen. Supports the entire test suite.
   - `freebsd`: maintained by @YohDeadfall and @LorrensP-2158466. Supports the entire test suite.
   - `android`: **maintainer wanted**. Support very incomplete, but a basic "hello world" works.
-  - `wasi`: **maintainer wanted**. Support very incomplete, not even standard output works, but an empty `main` function works.
+  - `wasi`: **maintainer wanted**. Support very incomplete, but a basic "hello world" works.
 - For targets on other operating systems, Miri might fail before even reaching the `main` function.
 
 However, even for targets that we do support, the degree of support for accessing platform APIs
@@ -286,11 +286,6 @@ environment variable. We first document the most relevant and most commonly used
   specific circumstances, but Miri's behavior will also be more stable across versions and targets.
   This is equivalent to `-Zmiri-fixed-schedule -Zmiri-compare-exchange-weak-failure-rate=0.0
   -Zmiri-address-reuse-cross-thread-rate=0.0 -Zmiri-disable-weak-memory-emulation`.
-* `-Zmiri-deterministic-floats` makes Miri's floating-point behavior fully deterministic. This means
-  that operations will always return the preferred NaN, imprecise operations will not have any
-  random error applied to them, and `min`/`max` as "maybe fused" multiply-add all behave
-  deterministically. Note that Miri still uses host floats for some operations, so behavior can
-  still differ depending on the host target and setup.
 * `-Zmiri-disable-isolation` disables host isolation. As a consequence,
   the program has access to host resources such as environment variables, file
   systems, and randomness.
@@ -324,6 +319,14 @@ environment variable. We first document the most relevant and most commonly used
   Can be used without a value; in that case the range defaults to `0..64`.
 * `-Zmiri-many-seeds-keep-going` tells Miri to really try all the seeds in the given range, even if
   a failing seed has already been found. This is useful to determine which fraction of seeds fails.
+* `-Zmiri-max-extra-rounding-error` tells Miri to always apply the maximum error to float operations
+  that do not have a guaranteed precision. The sign of the error is still non-deterministic.
+* `-Zmiri-no-extra-rounding-error` stops Miri from adding extra rounding errors to float operations
+  that do not have a guaranteed precision.
+* `-Zmiri-no-short-fd-operations` stops Miri from artificially forcing `read`/`write` operations
+  to only process a part of their buffer. Note that whenever Miri uses host operations to
+  implement `read`/`write` (e.g. for file-backed file descriptors), the host system can still
+  introduce short reads/writes.
 * `-Zmiri-num-cpus` states the number of available CPUs to be reported by miri. By default, the
   number of available CPUs is `1`. Note that this flag does not affect how miri handles threads in
   any way.
@@ -376,6 +379,12 @@ to Miri failing to detect cases of undefined behavior in a program.
   will always fail and `0.0` means it will never fail. Note that setting it to
   `1.0` will likely cause hangs, since it means programs using
   `compare_exchange_weak` cannot make progress.
+* `-Zmiri-deterministic-floats` makes Miri's floating-point behavior fully deterministic. This means
+  that operations will always return the preferred NaN, imprecise operations will not have any
+  random error applied to them, and `min`/`max` and "maybe fused" multiply-add all behave
+  deterministically. Note that Miri still uses host floats for some operations, so behavior can
+  still differ depending on the host target and setup. See `-Zmiri-no-extra-rounding-error` for
+  a flag that specifically only disables the random error.
 * `-Zmiri-disable-alignment-check` disables checking pointer alignment, so you
   can focus on other failures, but it means Miri can miss bugs in your program.
   Using this flag is **unsound**.
@@ -597,6 +606,7 @@ Definite bugs found:
 * [A bug in the new `RwLock::downgrade` implementation](https://rust-lang.zulipchat.com/#narrow/channel/269128-miri/topic/Miri.20error.20library.20test) (caught by Miri before it landed in the Rust repo)
 * [Mockall reading uninitialized memory when mocking `std::io::Read::read`, even if all expectations are satisfied](https://github.com/asomers/mockall/issues/647) (caught by Miri running Tokio's test suite)
 * [`ReentrantLock` not correctly dealing with reuse of addresses for TLS storage of different threads](https://github.com/rust-lang/rust/pull/141248)
+* [Rare Deadlock in the thread (un)parking example code](https://github.com/rust-lang/rust/issues/145816)
 
 Violations of [Stacked Borrows] found that are likely bugs (but Stacked Borrows is currently just an experiment):
 

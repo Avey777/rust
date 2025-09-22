@@ -2,10 +2,8 @@ use clippy_utils::diagnostics::span_lint_and_then;
 use clippy_utils::source::{
     SpanRangeExt, expr_block, snippet, snippet_block_with_context, snippet_with_applicability, snippet_with_context,
 };
-use clippy_utils::ty::implements_trait;
-use clippy_utils::{
-    is_lint_allowed, is_unit_expr, peel_blocks, peel_hir_pat_refs, peel_middle_ty_refs, peel_n_hir_expr_refs,
-};
+use clippy_utils::ty::{implements_trait, peel_and_count_ty_refs};
+use clippy_utils::{is_lint_allowed, is_unit_expr, peel_blocks, peel_hir_pat_refs, peel_n_hir_expr_refs};
 use core::ops::ControlFlow;
 use rustc_arena::DroplessArena;
 use rustc_errors::{Applicability, Diag};
@@ -112,9 +110,7 @@ fn report_single_pattern(
         let (sugg, help) = if is_unit_expr(arm.body) {
             (String::new(), "`match` expression can be removed")
         } else {
-            let mut sugg = snippet_block_with_context(cx, arm.body.span, ctxt, "..", Some(expr.span), &mut app)
-                .0
-                .to_string();
+            let mut sugg = snippet_block_with_context(cx, arm.body.span, ctxt, "..", Some(expr.span), &mut app).0;
             if let Node::Stmt(stmt) = cx.tcx.parent_hir_node(expr.hir_id)
                 && let StmtKind::Expr(_) = stmt.kind
                 && match arm.body.kind {
@@ -127,7 +123,7 @@ fn report_single_pattern(
             (sugg, "try")
         };
         span_lint_and_then(cx, lint, expr.span, msg, |diag| {
-            diag.span_suggestion(expr.span, help, sugg.to_string(), app);
+            diag.span_suggestion(expr.span, help, sugg, app);
             note(diag);
         });
         return;
@@ -135,7 +131,7 @@ fn report_single_pattern(
 
     let (pat, pat_ref_count) = peel_hir_pat_refs(arm.pat);
     let (msg, sugg) = if let PatKind::Expr(_) = pat.kind
-        && let (ty, ty_ref_count) = peel_middle_ty_refs(cx.typeck_results().expr_ty(ex))
+        && let (ty, ty_ref_count, _) = peel_and_count_ty_refs(cx.typeck_results().expr_ty(ex))
         && let Some(spe_trait_id) = cx.tcx.lang_items().structural_peq_trait()
         && let Some(pe_trait_id) = cx.tcx.lang_items().eq_trait()
         && (ty.is_integral()
@@ -152,21 +148,26 @@ fn report_single_pattern(
             }) if lit.node.is_str() || lit.node.is_bytestr() => pat_ref_count + 1,
             _ => pat_ref_count,
         };
-        // References are only implicitly added to the pattern, so no overflow here.
-        // e.g. will work: match &Some(_) { Some(_) => () }
-        // will not: match Some(_) { &Some(_) => () }
-        let ref_count_diff = ty_ref_count - pat_ref_count;
 
-        // Try to remove address of expressions first.
-        let (ex, removed) = peel_n_hir_expr_refs(ex, ref_count_diff);
-        let ref_count_diff = ref_count_diff - removed;
+        // References are implicitly removed when `deref_patterns` are used.
+        // They are implicitly added when match ergonomics are used.
+        let (ex, ref_or_deref_adjust) = if ty_ref_count > pat_ref_count {
+            let ref_count_diff = ty_ref_count - pat_ref_count;
+
+            // Try to remove address of expressions first.
+            let (ex, removed) = peel_n_hir_expr_refs(ex, ref_count_diff);
+
+            (ex, String::from(if ref_count_diff == removed { "" } else { "&" }))
+        } else {
+            (ex, "*".repeat(pat_ref_count - ty_ref_count))
+        };
 
         let msg = "you seem to be trying to use `match` for an equality check. Consider using `if`";
         let sugg = format!(
             "if {} == {}{} {}{els_str}",
             snippet_with_context(cx, ex.span, ctxt, "..", &mut app).0,
             // PartialEq for different reference counts may not exist.
-            "&".repeat(ref_count_diff),
+            ref_or_deref_adjust,
             snippet_with_applicability(cx, arm.pat.span, "..", &mut app),
             expr_block(cx, arm.body, ctxt, "..", Some(expr.span), &mut app),
         );
@@ -183,7 +184,7 @@ fn report_single_pattern(
     };
 
     span_lint_and_then(cx, lint, expr.span, msg, |diag| {
-        diag.span_suggestion(expr.span, "try", sugg.to_string(), app);
+        diag.span_suggestion(expr.span, "try", sugg, app);
         note(diag);
     });
 }

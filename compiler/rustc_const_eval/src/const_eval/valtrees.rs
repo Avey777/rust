@@ -1,6 +1,7 @@
 use rustc_abi::{BackendRepr, FieldIdx, VariantIdx};
 use rustc_data_structures::stack::ensure_sufficient_stack;
 use rustc_middle::mir::interpret::{EvalToValTreeResult, GlobalId, ValTreeCreationError};
+use rustc_middle::traits::ObligationCause;
 use rustc_middle::ty::layout::{LayoutCx, TyAndLayout};
 use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_middle::{bug, mir};
@@ -196,6 +197,7 @@ fn reconstruct_place_meta<'tcx>(
     // Traverse the type, and update `last_valtree` as we go.
     let tail = tcx.struct_tail_raw(
         layout.ty,
+        &ObligationCause::dummy(),
         |ty| ty,
         || {
             let branches = last_valtree.unwrap_branch();
@@ -259,7 +261,7 @@ pub fn valtree_to_const_value<'tcx>(
     tcx: TyCtxt<'tcx>,
     typing_env: ty::TypingEnv<'tcx>,
     cv: ty::Value<'tcx>,
-) -> mir::ConstValue<'tcx> {
+) -> mir::ConstValue {
     // Basic idea: We directly construct `Scalar` values from trivial `ValTree`s
     // (those for constants with type bool, int, uint, float or char).
     // For all other types we create an `MPlace` and fill that by walking

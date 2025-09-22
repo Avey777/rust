@@ -117,6 +117,8 @@ jobs:
           os: windows-2025
         - tuple: aarch64-pc-windows-msvc
           os: windows-11-arm
+        - tuple: arm64ec-pc-windows-msvc
+          os: windows-11-arm
         - tuple: x86_64-pc-windows-gnu
           os: windows-2025
         # - tuple: i686-pc-windows-gnu
@@ -207,14 +209,6 @@ jobs:
         rustup update nightly --no-self-update
         rustup default nightly
       shell: bash
-      if: matrix.target.os != 'windows-11-arm'
-    - name: Install Rust for `windows-11-arm` runners
-      # The arm runners don't have Rust pre-installed (https://github.com/actions/partner-runner-images/issues/77)
-      run: |
-        curl https://sh.rustup.rs | sh -s -- -y --default-toolchain nightly
-        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      shell: bash
-      if: matrix.target.os == 'windows-11-arm'
 
     - run: rustup target add ${{ matrix.target.tuple }}
       shell: bash
@@ -255,22 +249,34 @@ jobs:
       env:
         TARGET: ${{ matrix.target.tuple }}
 
-  build-std-detect:
+  # Check that the generated files agree with the checked-in versions.
+  check-stdarch-gen:
     needs: [style]
-    name: Build std_detect
+    name: Check stdarch-gen-{arm, loongarch} output
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
     - name: Install Rust
-      run: rustup update nightly && rustup default nightly
-    - run: ./ci/build-std-detect.sh
+      run: rustup update nightly && rustup default nightly && rustup component add rustfmt
+    - name: Check arm spec
+      run: |
+        cargo run --bin=stdarch-gen-arm --release -- crates/stdarch-gen-arm/spec
+        git diff --exit-code
+    - name: Check lsx.spec
+      run: |
+        cargo run --bin=stdarch-gen-loongarch --release -- crates/stdarch-gen-loongarch/lsx.spec
+        git diff --exit-code
+    - name: Check lasx.spec
+      run: |
+        cargo run --bin=stdarch-gen-loongarch --release -- crates/stdarch-gen-loongarch/lasx.spec
+        git diff --exit-code
 
   conclusion:
     needs:
       - docs
       - verify
       - test
-      - build-std-detect
+      - check-stdarch-gen
     runs-on: ubuntu-latest
     # We need to ensure this job does *not* get skipped if its dependencies fail,
     # because a skipped job is considered a success by GitHub. So we have to

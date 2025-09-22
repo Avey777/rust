@@ -37,10 +37,10 @@
 
 use std::ops::Deref;
 
-use rustc_attr_data_structures::InlineAttr;
 use rustc_errors::codes::*;
 use rustc_errors::{Applicability, Diag, struct_span_code_err};
 use rustc_hir as hir;
+use rustc_hir::attrs::InlineAttr;
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_hir_analysis::hir_ty_lowering::HirTyLowerer;
 use rustc_infer::infer::relate::RelateResult;
@@ -558,7 +558,7 @@ impl<'f, 'tcx> Coerce<'f, 'tcx> {
             | ty::Slice(_)
             | ty::FnDef(_, _)
             | ty::FnPtr(_, _)
-            | ty::Dynamic(_, _, _)
+            | ty::Dynamic(_, _)
             | ty::Closure(_, _)
             | ty::CoroutineClosure(_, _)
             | ty::Coroutine(_, _)
@@ -1800,11 +1800,13 @@ impl<'tcx, 'exprs, E: AsCoercionSite> CoerceMany<'tcx, 'exprs, E> {
                             .kind()
                             .map_bound(|clause| match clause {
                                 ty::ClauseKind::Trait(trait_pred) => Some(ty::ClauseKind::Trait(
-                                    trait_pred.with_self_ty(fcx.tcx, ty),
+                                    trait_pred.with_replaced_self_ty(fcx.tcx, ty),
                                 )),
-                                ty::ClauseKind::Projection(proj_pred) => Some(
-                                    ty::ClauseKind::Projection(proj_pred.with_self_ty(fcx.tcx, ty)),
-                                ),
+                                ty::ClauseKind::Projection(proj_pred) => {
+                                    Some(ty::ClauseKind::Projection(
+                                        proj_pred.with_replaced_self_ty(fcx.tcx, ty),
+                                    ))
+                                }
                                 _ => None,
                             })
                             .transpose()?;
@@ -1895,7 +1897,7 @@ impl<'tcx, 'exprs, E: AsCoercionSite> CoerceMany<'tcx, 'exprs, E> {
                     fcx.suggest_semicolon_at_end(cond_expr.span, &mut err);
                 }
             }
-        };
+        }
 
         // If this is due to an explicit `return`, suggest adding a return type.
         if let Some((fn_id, fn_decl)) = fcx.get_fn_decl(block_or_return_id)

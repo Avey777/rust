@@ -4,7 +4,7 @@ use libc::{c_char, c_uint};
 
 use super::MetadataKindId;
 use super::ffi::{AttributeKind, BasicBlock, Metadata, Module, Type, Value};
-use crate::llvm::Bool;
+use crate::llvm::{Bool, Builder};
 
 #[link(name = "llvm-wrapper", kind = "static")]
 unsafe extern "C" {
@@ -31,6 +31,14 @@ unsafe extern "C" {
         index: c_uint,
         kind: AttributeKind,
     );
+    pub(crate) fn LLVMRustPositionBefore<'a>(B: &'a Builder<'_>, I: &'a Value);
+    pub(crate) fn LLVMRustPositionAfter<'a>(B: &'a Builder<'_>, I: &'a Value);
+    pub(crate) fn LLVMRustGetFunctionCall(
+        F: &Value,
+        name: *const c_char,
+        NameLen: libc::size_t,
+    ) -> Option<&Value>;
+
 }
 
 unsafe extern "C" {
@@ -51,10 +59,10 @@ pub(crate) enum LLVMRustVerifierFailureAction {
     LLVMReturnStatusAction = 2,
 }
 
-#[cfg(llvm_enzyme)]
+#[cfg(feature = "llvm_enzyme")]
 pub(crate) use self::Enzyme_AD::*;
 
-#[cfg(llvm_enzyme)]
+#[cfg(feature = "llvm_enzyme")]
 pub(crate) mod Enzyme_AD {
     use std::ffi::{CString, c_char};
 
@@ -126,10 +134,10 @@ pub(crate) mod Enzyme_AD {
     }
 }
 
-#[cfg(not(llvm_enzyme))]
+#[cfg(not(feature = "llvm_enzyme"))]
 pub(crate) use self::Fallback_AD::*;
 
-#[cfg(not(llvm_enzyme))]
+#[cfg(not(feature = "llvm_enzyme"))]
 pub(crate) mod Fallback_AD {
     #![allow(unused_variables)]
 

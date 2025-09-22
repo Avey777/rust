@@ -12,6 +12,10 @@ use crate::{Build, Config, Flags, t};
 
 pub mod git;
 
+// Note: tests for `shared_helpers` is separate here, as otherwise shim binaries that include the
+// `shared_helpers` via `#[path]` would fail to find it, breaking `./x check bootstrap`.
+mod shared_helpers_tests;
+
 /// Holds temporary state of a bootstrap test.
 /// Right now it is only used to redirect the build directory of the bootstrap
 /// invocation, in the future it would be great if we could actually execute
@@ -25,6 +29,10 @@ impl TestCtx {
         let directory = TempDir::new().expect("cannot create temporary directory");
         eprintln!("Running test in {}", directory.path().display());
         Self { directory }
+    }
+
+    pub fn dir(&self) -> &Path {
+        self.directory.path()
     }
 
     /// Starts a new invocation of bootstrap that executes `kind` as its top level command

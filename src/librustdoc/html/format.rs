@@ -15,11 +15,11 @@ use std::slice;
 use itertools::{Either, Itertools};
 use rustc_abi::ExternAbi;
 use rustc_ast::join_path_syms;
-use rustc_attr_data_structures::{ConstStability, StabilityLevel, StableSince};
 use rustc_data_structures::fx::FxHashSet;
 use rustc_hir as hir;
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::{DefId, LOCAL_CRATE};
+use rustc_hir::{ConstStability, StabilityLevel, StableSince};
 use rustc_metadata::creader::{CStore, LoadedMacro};
 use rustc_middle::ty::{self, TyCtxt, TypingMode};
 use rustc_span::symbol::kw;
@@ -368,6 +368,8 @@ pub(crate) enum HrefError {
     Private,
     // Not in external cache, href link should be in same page
     NotInExternalCache,
+    /// Refers to an unnamable item, such as one defined within a function or const block.
+    UnnamableItem,
 }
 
 /// This function is to get the external macro path because they are not in the cache used in
@@ -479,6 +481,26 @@ fn generate_item_def_id_path(
     Ok((url_parts, shortty, fqp))
 }
 
+/// Checks if the given defid refers to an item that is unnamable, such as one defined in a const block.
+fn is_unnamable(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    let mut cur_did = did;
+    while let Some(parent) = tcx.opt_parent(cur_did) {
+        match tcx.def_kind(parent) {
+            // items defined in these can be linked to, as long as they are visible
+            DefKind::Mod | DefKind::ForeignMod => cur_did = parent,
+            // items in impls can be linked to,
+            // as long as we can link to the item the impl is on.
+            // since associated traits are not a thing,
+            // it should not be possible to refer to an impl item if
+            // the base type is not namable.
+            DefKind::Impl { .. } => return false,
+            // everything else does not have docs generated for it
+            _ => return true,
+        }
+    }
+    return false;
+}
+
 fn to_module_fqp(shortty: ItemType, fqp: &[Symbol]) -> &[Symbol] {
     if shortty == ItemType::Module { fqp } else { &fqp[..fqp.len() - 1] }
 }
@@ -552,6 +574,9 @@ pub(crate) fn href_with_root_path(
         }
         _ => original_did,
     };
+    if is_unnamable(cx.tcx(), did) {
+        return Err(HrefError::UnnamableItem);
+    }
     let cache = cx.cache();
     let relative_to = &cx.current;
 
@@ -1239,6 +1264,7 @@ impl std::fmt::Write for WriteCounter {
 }
 
 // Implements Display by emitting the given number of spaces.
+#[derive(Clone, Copy)]
 struct Indent(usize);
 
 impl Display for Indent {
@@ -1247,6 +1273,37 @@ impl Display for Indent {
             f.write_char(' ').unwrap();
         });
         Ok(())
+    }
+}
+
+impl clean::Parameter {
+    fn print(&self, cx: &Context<'_>) -> impl fmt::Display {
+        fmt::from_fn(move |f| {
+            if let Some(self_ty) = self.to_receiver() {
+                match self_ty {
+                    clean::SelfTy => f.write_str("self"),
+                    clean::BorrowedRef { lifetime, mutability, type_: box clean::SelfTy } => {
+                        f.write_str(if f.alternate() { "&" } else { "&amp;" })?;
+                        if let Some(lt) = lifetime {
+                            write!(f, "{lt} ", lt = lt.print())?;
+                        }
+                        write!(f, "{mutability}self", mutability = mutability.print_with_space())
+                    }
+                    _ => {
+                        f.write_str("self: ")?;
+                        self_ty.print(cx).fmt(f)
+                    }
+                }
+            } else {
+                if self.is_const {
+                    write!(f, "const ")?;
+                }
+                if let Some(name) = self.name {
+                    write!(f, "{name}: ")?;
+                }
+                self.type_.print(cx).fmt(f)
+            }
+        })
     }
 }
 
@@ -1308,63 +1365,42 @@ impl clean::FnDecl {
         f: &mut fmt::Formatter<'_>,
         cx: &Context<'_>,
     ) -> fmt::Result {
-        let amp = if f.alternate() { "&" } else { "&amp;" };
+        f.write_char('(')?;
 
-        write!(f, "(")?;
-        if let Some(n) = line_wrapping_indent
-            && !self.inputs.is_empty()
-        {
-            write!(f, "\n{}", Indent(n + 4))?;
-        }
+        if !self.inputs.is_empty() {
+            let line_wrapping_indent = line_wrapping_indent.map(|n| Indent(n + 4));
 
-        let last_input_index = self.inputs.len().checked_sub(1);
-        for (i, param) in self.inputs.iter().enumerate() {
-            if let Some(selfty) = param.to_receiver() {
-                match selfty {
-                    clean::SelfTy => {
-                        write!(f, "self")?;
-                    }
-                    clean::BorrowedRef { lifetime, mutability, type_: box clean::SelfTy } => {
-                        write!(f, "{amp}")?;
-                        if let Some(lt) = lifetime {
-                            write!(f, "{lt} ", lt = lt.print())?;
-                        }
-                        write!(f, "{mutability}self", mutability = mutability.print_with_space())?;
-                    }
-                    _ => {
-                        write!(f, "self: ")?;
-                        selfty.print(cx).fmt(f)?;
-                    }
-                }
-            } else {
-                if param.is_const {
-                    write!(f, "const ")?;
-                }
-                if let Some(name) = param.name {
-                    write!(f, "{name}: ")?;
-                }
-                param.type_.print(cx).fmt(f)?;
+            if let Some(indent) = line_wrapping_indent {
+                write!(f, "\n{indent}")?;
             }
-            match (line_wrapping_indent, last_input_index) {
-                (_, None) => (),
-                (None, Some(last_i)) if i != last_i => write!(f, ", ")?,
-                (None, Some(_)) => (),
-                (Some(n), Some(last_i)) if i != last_i => write!(f, ",\n{}", Indent(n + 4))?,
-                (Some(_), Some(_)) => writeln!(f, ",")?,
+
+            let sep = fmt::from_fn(|f| {
+                if let Some(indent) = line_wrapping_indent {
+                    write!(f, ",\n{indent}")
+                } else {
+                    f.write_str(", ")
+                }
+            });
+
+            self.inputs.iter().map(|param| param.print(cx)).joined(sep, f)?;
+
+            if line_wrapping_indent.is_some() {
+                writeln!(f, ",")?
+            }
+
+            if self.c_variadic {
+                match line_wrapping_indent {
+                    None => write!(f, ", ...")?,
+                    Some(indent) => writeln!(f, "{indent}...")?,
+                };
             }
         }
 
-        if self.c_variadic {
-            match line_wrapping_indent {
-                None => write!(f, ", ...")?,
-                Some(n) => writeln!(f, "{}...", Indent(n + 4))?,
-            };
+        if let Some(n) = line_wrapping_indent {
+            write!(f, "{}", Indent(n))?
         }
 
-        match line_wrapping_indent {
-            None => write!(f, ")")?,
-            Some(n) => write!(f, "{})", Indent(n))?,
-        };
+        f.write_char(')')?;
 
         self.print_output(cx).fmt(f)
     }

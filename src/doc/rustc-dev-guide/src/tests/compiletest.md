@@ -1,7 +1,5 @@
 # Compiletest
 
-<!-- toc -->
-
 ## Introduction
 
 `compiletest` is the main test harness of the Rust test suite. It allows test
@@ -29,7 +27,7 @@ on if or how to run the test, what behavior to expect, and more. See
 [directives](directives.md) and the test suite documentation below for more details
 on these annotations.
 
-See the [Adding new tests](adding.md) and [Best practies](best-practices.md)
+See the [Adding new tests](adding.md) and [Best practices](best-practices.md)
 chapters for a tutorial on creating a new test and advice on writing a good
 test, and the [Running tests](running.md) chapter on how to run the test suite.
 
@@ -68,7 +66,7 @@ The following test suites are available, with links for more information:
 | [`pretty`](#pretty-printer-tests)         | Check pretty printing                                                                                               |
 | [`incremental`](#incremental-tests)       | Check incremental compilation behavior                                                                              |
 | [`debuginfo`](#debuginfo-tests)           | Check debuginfo generation running debuggers                                                                        |
-| [`codegen`](#codegen-tests)               | Check code generation                                                                                               |
+| [`codegen-*`](#codegen-tests)             | Check code generation                                                                                               |
 | [`codegen-units`](#codegen-units-tests)   | Check codegen unit partitioning                                                                                     |
 | [`assembly`](#assembly-tests)             | Check assembly output                                                                                               |
 | [`mir-opt`](#mir-opt-tests)               | Check MIR generation and optimizations                                                                              |
@@ -290,7 +288,7 @@ For example, `./x test tests/debuginfo -- --debugger gdb` will only test GDB com
 
 ### Codegen tests
 
-The tests in [`tests/codegen`] test LLVM code generation. They compile the test
+The tests in [`tests/codegen-llvm`] test LLVM code generation. They compile the test
 with the `--emit=llvm-ir` flag to emit LLVM IR. They then run the LLVM
 [FileCheck] tool. The test is annotated with various `// CHECK` comments to
 check the generated code. See the [FileCheck] documentation for a tutorial and
@@ -301,13 +299,13 @@ See also the [assembly tests](#assembly-tests) for a similar set of tests.
 If you need to work with `#![no_std]` cross-compiling tests, consult the
 [`minicore` test auxiliary](./minicore.md) chapter.
 
-[`tests/codegen`]: https://github.com/rust-lang/rust/tree/master/tests/codegen
+[`tests/codegen-llvm`]: https://github.com/rust-lang/rust/tree/master/tests/codegen-llvm
 [FileCheck]: https://llvm.org/docs/CommandGuide/FileCheck.html
 
 
 ### Assembly tests
 
-The tests in [`tests/assembly`] test LLVM assembly output. They compile the test
+The tests in [`tests/assembly-llvm`] test LLVM assembly output. They compile the test
 with the `--emit=asm` flag to emit a `.s` file with the assembly output. They
 then run the LLVM [FileCheck] tool.
 
@@ -324,7 +322,7 @@ See also the [codegen tests](#codegen-tests) for a similar set of tests.
 If you need to work with `#![no_std]` cross-compiling tests, consult the
 [`minicore` test auxiliary](./minicore.md) chapter.
 
-[`tests/assembly`]: https://github.com/rust-lang/rust/tree/master/tests/assembly
+[`tests/assembly-llvm`]: https://github.com/rust-lang/rust/tree/master/tests/assembly-llvm
 
 
 ### Codegen-units tests
@@ -399,12 +397,18 @@ your test, causing separate files to be generated for 32bit and 64bit systems.
 
 ### `run-make` tests
 
-The tests in [`tests/run-make`] are general-purpose tests using Rust *recipes*,
-which are small programs (`rmake.rs`) allowing arbitrary Rust code such as
-`rustc` invocations, and is supported by a [`run_make_support`] library. Using
-Rust recipes provide the ultimate in flexibility.
+The tests in [`tests/run-make`] and [`tests/run-make-cargo`] are general-purpose
+tests using Rust *recipes*, which are small programs (`rmake.rs`) allowing
+arbitrary Rust code such as `rustc` invocations, and is supported by a
+[`run_make_support`] library. Using Rust recipes provide the ultimate in
+flexibility.
 
 `run-make` tests should be used if no other test suites better suit your needs.
+
+The `run-make-cargo` test suite additionally builds an in-tree `cargo` to support
+use cases that require testing in-tree `cargo` in conjunction with in-tree `rustc`.
+The `run-make` test suite does not have access to in-tree `cargo` (so it can be the
+faster-to-iterate test suite).
 
 #### Using Rust recipes
 
@@ -478,6 +482,7 @@ Then add a corresponding entry to `"rust-analyzer.linkedProjects"`
 ```
 
 [`tests/run-make`]: https://github.com/rust-lang/rust/tree/master/tests/run-make
+[`tests/run-make-cargo`]: https://github.com/rust-lang/rust/tree/master/tests/run-make-cargo
 [`run_make_support`]: https://github.com/rust-lang/rust/tree/master/src/tools/run-make-support
 
 ### Coverage tests

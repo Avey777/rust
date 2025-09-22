@@ -90,6 +90,7 @@ _arguments "${_arguments_options[@]}" : \
 '*--reproducible-artifact=[Additional reproducible artifacts that should be added to the reproducible artifacts archive]:REPRODUCIBLE_ARTIFACT:_default' \
 '*--set=[override options in bootstrap.toml]:section.option=value:' \
 '--ci=[Make bootstrap to behave as it'\''s running on the CI environment or not]:bool:(true false)' \
+'--timings[Pass \`--timings\` to Cargo to get crate build timings]' \
 '*-v[use verbose output (-vv for very verbose)]' \
 '*--verbose[use verbose output (-vv for very verbose)]' \
 '-i[use incremental compilation]' \
@@ -135,6 +136,7 @@ _arguments "${_arguments_options[@]}" : \
 '*--set=[override options in bootstrap.toml]:section.option=value:' \
 '--ci=[Make bootstrap to behave as it'\''s running on the CI environment or not]:bool:(true false)' \
 '--all-targets[Check all targets]' \
+'--timings[Pass \`--timings\` to Cargo to get crate build timings]' \
 '*-v[use verbose output (-vv for very verbose)]' \
 '*--verbose[use verbose output (-vv for very verbose)]' \
 '-i[use incremental compilation]' \
@@ -345,10 +347,11 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 '*--test-args=[extra arguments to be passed for the test tool being used (e.g. libtest, compiletest or rustdoc)]:ARGS:_default' \
 '*--compiletest-rustc-args=[extra options to pass the compiler when running compiletest tests]:ARGS:_default' \
-'--extra-checks=[comma-separated list of other files types to check (accepts py, py\:lint, py\:fmt, shell, shell\:lint, cpp, cpp\:fmt, spellcheck)]:EXTRA_CHECKS:_default' \
+'--extra-checks=[comma-separated list of other files types to check (accepts py, py\:lint, py\:fmt, shell, cpp, cpp\:fmt, js, js\:lint, js\:typecheck, spellcheck)]:EXTRA_CHECKS:_default' \
 '--compare-mode=[mode describing what file the actual ui output will be compared to]:COMPARE MODE:_default' \
 '--pass=[force {check,build,run}-pass tests to this mode]:check | build | run:_default' \
 '--run=[whether to execute run-* tests]:auto | always | never:_default' \
+'--test-codegen-backend=[Use a different codegen backend when running tests]:TEST_CODEGEN_BACKEND:_default' \
 '--config=[TOML configuration file for build]:FILE:_files' \
 '--build-dir=[Build directory, overrides \`build.build-dir\` in \`bootstrap.toml\`]:DIR:_files -/' \
 '--build=[host target of the stage0 compiler]:BUILD:' \

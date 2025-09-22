@@ -437,9 +437,7 @@ impl<'tcx> Validator<'_, 'tcx> {
                 self.validate_operand(op)?
             }
 
-            Rvalue::Discriminant(place) | Rvalue::Len(place) => {
-                self.validate_place(place.as_ref())?
-            }
+            Rvalue::Discriminant(place) => self.validate_place(place.as_ref())?,
 
             Rvalue::ThreadLocalRef(_) => return Err(Unpromotable),
 
@@ -875,7 +873,8 @@ impl<'a, 'tcx> Promoter<'a, 'tcx> {
             let mut promoted_operand = |ty, span| {
                 promoted.span = span;
                 promoted.local_decls[RETURN_PLACE] = LocalDecl::new(ty, span);
-                let args = tcx.erase_regions(GenericArgs::identity_for_item(tcx, def));
+                let args =
+                    tcx.erase_and_anonymize_regions(GenericArgs::identity_for_item(tcx, def));
                 let uneval =
                     mir::UnevaluatedConst { def, args, promoted: Some(next_promoted_index) };
 
@@ -997,12 +996,11 @@ fn promote_candidates<'tcx>(
     for candidate in candidates.into_iter().rev() {
         let Location { block, statement_index } = candidate.location;
         if let StatementKind::Assign(box (place, _)) = &body[block].statements[statement_index].kind
+            && let Some(local) = place.as_local()
         {
-            if let Some(local) = place.as_local() {
-                if temps[local] == TempState::PromotedOut {
-                    // Already promoted.
-                    continue;
-                }
+            if temps[local] == TempState::PromotedOut {
+                // Already promoted.
+                continue;
             }
         }
 
@@ -1066,11 +1064,11 @@ fn promote_candidates<'tcx>(
             _ => true,
         });
         let terminator = block.terminator_mut();
-        if let TerminatorKind::Drop { place, target, .. } = &terminator.kind {
-            if let Some(index) = place.as_local() {
-                if promoted(index) {
-                    terminator.kind = TerminatorKind::Goto { target: *target };
-                }
+        if let TerminatorKind::Drop { place, target, .. } = &terminator.kind
+            && let Some(index) = place.as_local()
+        {
+            if promoted(index) {
+                terminator.kind = TerminatorKind::Goto { target: *target };
             }
         }
     }

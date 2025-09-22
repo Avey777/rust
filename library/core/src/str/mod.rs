@@ -396,7 +396,6 @@ impl str {
     /// # Examples
     ///
     /// ```
-    /// #![feature(round_char_boundary)]
     /// let s = "❤️🧡💛💚💙💜";
     /// assert_eq!(s.len(), 26);
     /// assert!(!s.is_char_boundary(13));
@@ -405,19 +404,25 @@ impl str {
     /// assert_eq!(closest, 10);
     /// assert_eq!(&s[..closest], "❤️🧡");
     /// ```
-    #[unstable(feature = "round_char_boundary", issue = "93743")]
+    #[stable(feature = "round_char_boundary", since = "CURRENT_RUSTC_VERSION")]
+    #[rustc_const_stable(feature = "round_char_boundary", since = "CURRENT_RUSTC_VERSION")]
     #[inline]
-    pub fn floor_char_boundary(&self, index: usize) -> usize {
+    pub const fn floor_char_boundary(&self, index: usize) -> usize {
         if index >= self.len() {
             self.len()
         } else {
-            let lower_bound = index.saturating_sub(3);
-            let new_index = self.as_bytes()[lower_bound..=index]
-                .iter()
-                .rposition(|b| b.is_utf8_char_boundary());
+            let mut i = index;
+            while i > 0 {
+                if self.as_bytes()[i].is_utf8_char_boundary() {
+                    break;
+                }
+                i -= 1;
+            }
 
-            // SAFETY: we know that the character boundary will be within four bytes
-            unsafe { lower_bound + new_index.unwrap_unchecked() }
+            //  The character boundary will be within four bytes of the index
+            debug_assert!(i >= index.saturating_sub(3));
+
+            i
         }
     }
 
@@ -434,7 +439,6 @@ impl str {
     /// # Examples
     ///
     /// ```
-    /// #![feature(round_char_boundary)]
     /// let s = "❤️🧡💛💚💙💜";
     /// assert_eq!(s.len(), 26);
     /// assert!(!s.is_char_boundary(13));
@@ -443,17 +447,25 @@ impl str {
     /// assert_eq!(closest, 14);
     /// assert_eq!(&s[..closest], "❤️🧡💛");
     /// ```
-    #[unstable(feature = "round_char_boundary", issue = "93743")]
+    #[stable(feature = "round_char_boundary", since = "CURRENT_RUSTC_VERSION")]
+    #[rustc_const_stable(feature = "round_char_boundary", since = "CURRENT_RUSTC_VERSION")]
     #[inline]
-    pub fn ceil_char_boundary(&self, index: usize) -> usize {
+    pub const fn ceil_char_boundary(&self, index: usize) -> usize {
         if index >= self.len() {
             self.len()
         } else {
-            let upper_bound = Ord::min(index + 4, self.len());
-            self.as_bytes()[index..upper_bound]
-                .iter()
-                .position(|b| b.is_utf8_char_boundary())
-                .map_or(upper_bound, |pos| pos + index)
+            let mut i = index;
+            while i < self.len() {
+                if self.as_bytes()[i].is_utf8_char_boundary() {
+                    break;
+                }
+                i += 1;
+            }
+
+            //  The character boundary will be within four bytes of the index
+            debug_assert!(i <= index + 3);
+
+            i
         }
     }
 
@@ -591,7 +603,7 @@ impl str {
     #[stable(feature = "str_checked_slicing", since = "1.20.0")]
     #[rustc_const_unstable(feature = "const_index", issue = "143775")]
     #[inline]
-    pub const fn get<I: ~const SliceIndex<str>>(&self, i: I) -> Option<&I::Output> {
+    pub const fn get<I: [const] SliceIndex<str>>(&self, i: I) -> Option<&I::Output> {
         i.get(self)
     }
 
@@ -624,7 +636,7 @@ impl str {
     #[stable(feature = "str_checked_slicing", since = "1.20.0")]
     #[rustc_const_unstable(feature = "const_index", issue = "143775")]
     #[inline]
-    pub const fn get_mut<I: ~const SliceIndex<str>>(&mut self, i: I) -> Option<&mut I::Output> {
+    pub const fn get_mut<I: [const] SliceIndex<str>>(&mut self, i: I) -> Option<&mut I::Output> {
         i.get_mut(self)
     }
 
@@ -3060,13 +3072,14 @@ impl str {
     /// for example references to `Box<str>` or `Arc<str>`.
     #[inline]
     #[unstable(feature = "str_as_str", issue = "130366")]
-    pub fn as_str(&self) -> &str {
+    pub const fn as_str(&self) -> &str {
         self
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
-impl AsRef<[u8]> for str {
+#[rustc_const_unstable(feature = "const_convert", issue = "143773")]
+impl const AsRef<[u8]> for str {
     #[inline]
     fn as_ref(&self) -> &[u8] {
         self.as_bytes()

@@ -75,7 +75,7 @@ impl<D: Decoder> Decodable<D> for MyStruct {
 
 rustc has a lot of [arena allocated types].
 Deserializing these types isn't possible without access to the arena that they need to be allocated on.
-The [`TyDecoder`] and [`TyEncoder`] traits are supertraits of [`Decoder`] and [`Encoder`] that allow access to a [`TyCtxt`].
+The [`TyDecoder`] and [`TyEncoder`] traits are subtraits of [`Decoder`] and [`Encoder`] that allow access to a [`TyCtxt`].
 
 Types which contain `arena` allocated types can then bound the type parameter of their
 [`Encodable`] and [`Decodable`] implementations with these traits.
@@ -106,7 +106,7 @@ type wrapper, like [`ty::Predicate`] and manually implementing `Encodable` and
 [`Encodable`]: https://doc.rust-lang.org/nightly/nightly-rustc/rustc_serialize/trait.Encodable.html
 [`Encoder`]: https://doc.rust-lang.org/nightly/nightly-rustc/rustc_serialize/trait.Encoder.html
 [`RefDecodable`]: https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/ty/codec/trait.RefDecodable.html
-[`rustc_middle`]: https://doc.rust-lang.org/nightly/nightly-rustc/src/rustc_type_ir/codec.rs.html#21
+[`rustc_middle`]: https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/index.html
 [`ty::Predicate`]: https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/ty/predicate/struct.Predicate.html
 [`TyCtxt`]: https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/ty/struct.TyCtxt.html
 [`TyDecodable`]: https://doc.rust-lang.org/nightly/nightly-rustc/rustc_macros/derive.TyDecodable.html

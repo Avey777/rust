@@ -1,9 +1,9 @@
-use rustc_hir::def_id::DefId;
 use rustc_infer::infer::TyCtxtInferExt;
 use rustc_infer::infer::canonical::query_response::make_query_region_constraints;
 use rustc_infer::infer::resolve::OpportunisticRegionResolver;
 use rustc_infer::traits::{Obligation, ObligationCause};
 use rustc_middle::ty::{self, Ty, TyCtxt, TypeFoldable, TypeVisitableExt, fold_regions};
+use rustc_span::def_id::DefId;
 use rustc_trait_selection::traits::{ObligationCtxt, with_replaced_escaping_bound_vars};
 
 /// Return the set of types that should be taken into account when checking
@@ -70,7 +70,6 @@ fn compute_assumptions<'tcx>(
         let region_constraints = infcx.take_and_reset_region_constraints();
 
         let outlives = make_query_region_constraints(
-            tcx,
             region_obligations,
             &region_constraints,
             region_assumptions,

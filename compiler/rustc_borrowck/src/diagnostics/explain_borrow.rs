@@ -341,7 +341,7 @@ impl<'tcx> BorrowExplanation<'tcx> {
                                 }
                             }
                         } else if let LocalInfo::BlockTailTemp(info) = local_decl.local_info() {
-                            let sp = info.span.find_oldest_ancestor_in_same_ctxt();
+                            let sp = info.span.find_ancestor_not_from_macro().unwrap_or(info.span);
                             if info.tail_result_is_ignored {
                                 // #85581: If the first mutable borrow's scope contains
                                 // the second borrow, this suggestion isn't helpful.
@@ -438,7 +438,7 @@ impl<'tcx> BorrowExplanation<'tcx> {
 
             let elaborated_args =
                 std::iter::zip(*args, &generics.own_params).map(|(arg, param)| {
-                    if let Some(ty::Dynamic(obj, _, ty::Dyn)) = arg.as_type().map(Ty::kind) {
+                    if let Some(ty::Dynamic(obj, _)) = arg.as_type().map(Ty::kind) {
                         let default = tcx.object_lifetime_default(param.def_id);
 
                         let re_static = tcx.lifetimes.re_static;
@@ -464,7 +464,7 @@ impl<'tcx> BorrowExplanation<'tcx> {
 
                         has_dyn = true;
 
-                        Ty::new_dynamic(tcx, obj, implied_region, ty::Dyn).into()
+                        Ty::new_dynamic(tcx, obj, implied_region).into()
                     } else {
                         arg
                     }
@@ -565,7 +565,7 @@ impl<'tcx> MirBorrowckCtxt<'_, '_, 'tcx> {
         let (blame_constraint, path) = self.regioncx.best_blame_constraint(
             borrow_region,
             NllRegionVariableOrigin::FreeRegion,
-            |r| self.regioncx.provides_universal_region(r, borrow_region, outlived_region),
+            outlived_region,
         );
         let BlameConstraint { category, from_closure, cause, .. } = blame_constraint;
 
@@ -917,30 +917,29 @@ impl<'tcx> MirBorrowckCtxt<'_, '_, 'tcx> {
 
                 if let TerminatorKind::Call { destination, target: Some(block), args, .. } =
                     &terminator.kind
+                    && let Some(dest) = destination.as_local()
                 {
-                    if let Some(dest) = destination.as_local() {
-                        debug!(
-                            "was_captured_by_trait_object: target={:?} dest={:?} args={:?}",
-                            target, dest, args
-                        );
-                        // Check if one of the arguments to this function is the target place.
-                        let found_target = args.iter().any(|arg| {
-                            if let Operand::Move(place) = arg.node {
-                                if let Some(potential) = place.as_local() {
-                                    potential == target
-                                } else {
-                                    false
-                                }
+                    debug!(
+                        "was_captured_by_trait_object: target={:?} dest={:?} args={:?}",
+                        target, dest, args
+                    );
+                    // Check if one of the arguments to this function is the target place.
+                    let found_target = args.iter().any(|arg| {
+                        if let Operand::Move(place) = arg.node {
+                            if let Some(potential) = place.as_local() {
+                                potential == target
                             } else {
                                 false
                             }
-                        });
-
-                        // If it is, follow this to the next block and update the target.
-                        if found_target {
-                            target = dest;
-                            queue.push(block.start_location());
+                        } else {
+                            false
                         }
+                    });
+
+                    // If it is, follow this to the next block and update the target.
+                    if found_target {
+                        target = dest;
+                        queue.push(block.start_location());
                     }
                 }
             }

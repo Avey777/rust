@@ -65,30 +65,34 @@ fn main() -> Result<(), ()> {
         }
     }
 
-    // FIXME(binarycat): once we get package.json in version control, this should be updated to install via that instead
-    let local_node_modules =
-        npm::install_one(&config.out_dir, &config.npm, "browser-ui-test", "0.21.1")
-            .expect("unable to install browser-ui-test");
+    let local_node_modules = npm::install(&config.rust_src, &config.out_dir, &config.npm)
+        .expect("unable to install browser-ui-test");
 
     let mut command = Command::new(&config.nodejs);
 
     command
-        .arg(config.rust_src.join("src/tools/rustdoc-gui/tester.js"))
+        .arg(local_node_modules.join(".bin/browser-ui-test"))
         .arg("--jobs")
         .arg(&config.jobs)
-        .arg("--doc-folder")
+        .arg("--variable")
+        .arg("DOC_PATH")
         .arg(config.out_dir.join("doc"))
-        .arg("--tests-folder")
-        .arg(config.rust_src.join("tests/rustdoc-gui"));
+        .arg("--allow-file-access-from-files")
+        .arg("--display-format")
+        .arg("compact");
 
     if local_node_modules.exists() {
-        // Link the local node_modules if exists.
+        // Link the local node_modules if it exists.
         // This is useful when we run rustdoc-gui-test from outside of the source root.
         command.env("NODE_PATH", local_node_modules);
     }
 
-    for file in &config.goml_files {
-        command.arg("--file").arg(file);
+    if config.goml_files.is_empty() {
+        command.arg("--test-folder").arg(config.rust_src.join("tests/rustdoc-gui"));
+    } else {
+        for file in &config.goml_files {
+            command.arg("--test-file").arg(config.rust_src.join("tests/rustdoc-gui").join(file));
+        }
     }
 
     command.args(&config.test_args);

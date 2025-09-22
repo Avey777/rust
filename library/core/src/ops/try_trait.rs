@@ -128,7 +128,8 @@ use crate::ops::ControlFlow;
 )]
 #[doc(alias = "?")]
 #[lang = "Try"]
-pub trait Try: FromResidual {
+#[rustc_const_unstable(feature = "const_try", issue = "74935")]
+pub const trait Try: [const] FromResidual {
     /// The type of the value produced by `?` when *not* short-circuiting.
     #[unstable(feature = "try_trait_v2", issue = "84277", old_name = "try_trait")]
     type Output;
@@ -304,7 +305,8 @@ pub trait Try: FromResidual {
 )]
 #[rustc_diagnostic_item = "FromResidual"]
 #[unstable(feature = "try_trait_v2", issue = "84277", old_name = "try_trait")]
-pub trait FromResidual<R = <Self as Try>::Residual> {
+#[rustc_const_unstable(feature = "const_try", issue = "74935")]
+pub const trait FromResidual<R = <Self as Try>::Residual> {
     /// Constructs the type from a compatible `Residual` type.
     ///
     /// This should be implemented consistently with the `branch` method such
@@ -357,7 +359,8 @@ where
 /// and in the other direction,
 /// `<Result<Infallible, E> as Residual<T>>::TryType = Result<T, E>`.
 #[unstable(feature = "try_trait_v2_residual", issue = "91285")]
-pub trait Residual<O> {
+#[rustc_const_unstable(feature = "const_try", issue = "74935")]
+pub const trait Residual<O> {
     /// The "return" type of this meta-function.
     #[unstable(feature = "try_trait_v2_residual", issue = "91285")]
     type TryType: Try<Output = O, Residual = Self>;

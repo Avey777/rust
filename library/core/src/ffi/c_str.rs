@@ -652,7 +652,7 @@ impl CStr {
     }
 }
 
-#[stable(feature = "c_string_eq_c_str", since = "CURRENT_RUSTC_VERSION")]
+#[stable(feature = "c_string_eq_c_str", since = "1.90.0")]
 impl PartialEq<&Self> for CStr {
     #[inline]
     fn eq(&self, other: &&Self) -> bool {
@@ -708,7 +708,8 @@ impl ops::Index<ops::RangeFrom<usize>> for CStr {
 }
 
 #[stable(feature = "cstring_asref", since = "1.7.0")]
-impl AsRef<CStr> for CStr {
+#[rustc_const_unstable(feature = "const_convert", issue = "143773")]
+impl const AsRef<CStr> for CStr {
     #[inline]
     fn as_ref(&self) -> &CStr {
         self

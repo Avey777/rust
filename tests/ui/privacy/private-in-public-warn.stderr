@@ -84,6 +84,15 @@ note: but type `types::Priv` is only usable at visibility `pub(self)`
 LL |     struct Priv;
    |     ^^^^^^^^^^^
 
+error[E0446]: private type `types::Priv` in public interface
+  --> $DIR/private-in-public-warn.rs:32:9
+   |
+LL |     struct Priv;
+   |     ----------- `types::Priv` declared as private
+...
+LL |         type Alias = Priv;
+   |         ^^^^^^^^^^ can't leak private type
+
 error: type `types::Priv` is more private than the item `types::ES`
   --> $DIR/private-in-public-warn.rs:27:9
    |
@@ -119,15 +128,6 @@ note: but type `types::Priv` is only usable at visibility `pub(self)`
    |
 LL |     struct Priv;
    |     ^^^^^^^^^^^
-
-error[E0446]: private type `types::Priv` in public interface
-  --> $DIR/private-in-public-warn.rs:32:9
-   |
-LL |     struct Priv;
-   |     ----------- `types::Priv` declared as private
-...
-LL |         type Alias = Priv;
-   |         ^^^^^^^^^^ can't leak private type
 
 error: trait `traits::PrivTr` is more private than the item `traits::Alias`
   --> $DIR/private-in-public-warn.rs:42:5

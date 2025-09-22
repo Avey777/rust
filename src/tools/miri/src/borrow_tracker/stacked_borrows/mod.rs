@@ -650,7 +650,7 @@ trait EvalContextPrivExt<'tcx, 'ecx>: crate::MiriInterpCxExt<'tcx> {
                         dcx.log_protector();
                     }
                 },
-                AllocKind::Function | AllocKind::Virtual | AllocKind::Dead => {
+                AllocKind::Function | AllocKind::VTable | AllocKind::TypeId | AllocKind::Dead => {
                     // No stacked borrows on these allocations.
                 }
             }
@@ -740,6 +740,7 @@ trait EvalContextPrivExt<'tcx, 'ecx>: crate::MiriInterpCxExt<'tcx> {
                 if let Some(access) = access {
                     assert_eq!(access, AccessKind::Write);
                     // Make sure the data race model also knows about this.
+                    // FIXME(genmc): Ensure this is still done in GenMC mode. Check for other places where GenMC may need to be informed.
                     if let Some(data_race) = alloc_extra.data_race.as_vclocks_mut() {
                         data_race.write(
                             alloc_id,
@@ -1021,7 +1022,7 @@ pub trait EvalContextExt<'tcx>: crate::MiriInterpCxExt<'tcx> {
                 trace!("Stacked Borrows tag {tag:?} exposed in {alloc_id:?}");
                 alloc_extra.borrow_tracker_sb().borrow_mut().exposed_tags.insert(tag);
             }
-            AllocKind::Function | AllocKind::Virtual | AllocKind::Dead => {
+            AllocKind::Function | AllocKind::VTable | AllocKind::TypeId | AllocKind::Dead => {
                 // No stacked borrows on these allocations.
             }
         }

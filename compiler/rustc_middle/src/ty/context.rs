@@ -5,7 +5,7 @@
 pub mod tls;
 
 use std::assert_matches::debug_assert_matches;
-use std::borrow::Borrow;
+use std::borrow::{Borrow, Cow};
 use std::cmp::Ordering;
 use std::env::VarError;
 use std::ffi::OsStr;
@@ -17,7 +17,6 @@ use std::{fmt, iter, mem};
 
 use rustc_abi::{ExternAbi, FieldIdx, Layout, LayoutData, TargetDataLayout, VariantIdx};
 use rustc_ast as ast;
-use rustc_attr_data_structures::{AttributeKind, find_attr};
 use rustc_data_structures::defer;
 use rustc_data_structures::fingerprint::Fingerprint;
 use rustc_data_structures::fx::FxHashMap;
@@ -33,26 +32,28 @@ use rustc_data_structures::sync::{
 use rustc_errors::{
     Applicability, Diag, DiagCtxtHandle, ErrorGuaranteed, LintDiagnostic, LintEmitter, MultiSpan,
 };
-use rustc_hir::def::{CtorKind, DefKind};
+use rustc_hir::attrs::AttributeKind;
+use rustc_hir::def::{CtorKind, CtorOf, DefKind};
 use rustc_hir::def_id::{CrateNum, DefId, LOCAL_CRATE, LocalDefId};
 use rustc_hir::definitions::{DefPathData, Definitions, DisambiguatorState};
 use rustc_hir::intravisit::VisitorExt;
 use rustc_hir::lang_items::LangItem;
-use rustc_hir::{self as hir, Attribute, HirId, Node, TraitCandidate};
+use rustc_hir::limit::Limit;
+use rustc_hir::{self as hir, Attribute, HirId, Node, TraitCandidate, find_attr};
 use rustc_index::IndexVec;
 use rustc_macros::{HashStable, TyDecodable, TyEncodable};
 use rustc_query_system::cache::WithDepNode;
 use rustc_query_system::dep_graph::DepNodeIndex;
 use rustc_query_system::ich::StableHashingContext;
 use rustc_serialize::opaque::{FileEncodeResult, FileEncoder};
+use rustc_session::Session;
 use rustc_session::config::CrateType;
 use rustc_session::cstore::{CrateStoreDyn, Untracked};
 use rustc_session::lint::Lint;
-use rustc_session::{Limit, Session};
 use rustc_span::def_id::{CRATE_DEF_ID, DefPathHash, StableCrateId};
 use rustc_span::{DUMMY_SP, Ident, Span, Symbol, kw, sym};
 use rustc_type_ir::TyKind::*;
-use rustc_type_ir::lang_items::TraitSolverLangItem;
+use rustc_type_ir::lang_items::{SolverAdtLangItem, SolverLangItem, SolverTraitLangItem};
 pub use rustc_type_ir::lift::Lift;
 use rustc_type_ir::{
     CollectAndApply, Interner, TypeFlags, TypeFoldable, WithCachedTypeInfo, elaborate, search_graph,
@@ -72,9 +73,9 @@ use crate::query::plumbing::QuerySystem;
 use crate::query::{IntoQueryParam, LocalCrate, Providers, TyCtxtAt};
 use crate::thir::Thir;
 use crate::traits;
-use crate::traits::solve;
 use crate::traits::solve::{
-    ExternalConstraints, ExternalConstraintsData, PredefinedOpaques, PredefinedOpaquesData,
+    self, CanonicalInput, ExternalConstraints, ExternalConstraintsData, PredefinedOpaques,
+    PredefinedOpaquesData, QueryResult, inspect,
 };
 use crate::ty::predicate::ExistentialPredicateStableCmpExt as _;
 use crate::ty::{
@@ -93,6 +94,14 @@ impl<'tcx> Interner for TyCtxt<'tcx> {
 
     type DefId = DefId;
     type LocalDefId = LocalDefId;
+    type TraitId = DefId;
+    type ForeignId = DefId;
+    type FunctionId = DefId;
+    type ClosureId = DefId;
+    type CoroutineClosureId = DefId;
+    type CoroutineId = DefId;
+    type AdtId = DefId;
+    type ImplId = DefId;
     type Span = Span;
 
     type GenericArgs = ty::GenericArgsRef<'tcx>;
@@ -152,7 +161,7 @@ impl<'tcx> Interner for TyCtxt<'tcx> {
     type PlaceholderConst = ty::PlaceholderConst;
 
     type ParamConst = ty::ParamConst;
-    type BoundConst = ty::BoundVar;
+    type BoundConst = ty::BoundConst;
     type ValueConst = ty::Value<'tcx>;
     type ExprConst = ty::Expr<'tcx>;
     type ValTree = ty::ValTree<'tcx>;
@@ -290,11 +299,8 @@ impl<'tcx> Interner for TyCtxt<'tcx> {
         debug_assert_matches!(self.def_kind(def_id), DefKind::AssocTy | DefKind::AssocConst);
         let trait_def_id = self.parent(def_id);
         debug_assert_matches!(self.def_kind(trait_def_id), DefKind::Trait);
-        let trait_generics = self.generics_of(trait_def_id);
-        (
-            ty::TraitRef::new_from_args(self, trait_def_id, args.truncate_to(self, trait_generics)),
-            &args[trait_generics.count()..],
-        )
+        let trait_ref = ty::TraitRef::from_assoc(self, trait_def_id, args);
+        (trait_ref, &args[trait_ref.args.len()..])
     }
 
     fn mk_args(self, args: &[Self::GenericArg]) -> ty::GenericArgsRef<'tcx> {
@@ -448,7 +454,10 @@ impl<'tcx> Interner for TyCtxt<'tcx> {
     }
 
     fn fn_is_const(self, def_id: DefId) -> bool {
-        debug_assert_matches!(self.def_kind(def_id), DefKind::Fn | DefKind::AssocFn);
+        debug_assert_matches!(
+            self.def_kind(def_id),
+            DefKind::Fn | DefKind::AssocFn | DefKind::Ctor(CtorOf::Struct, CtorKind::Fn)
+        );
         self.is_conditionally_const(def_id)
     }
 
@@ -483,20 +492,44 @@ impl<'tcx> Interner for TyCtxt<'tcx> {
         !self.codegen_fn_attrs(def_id).target_features.is_empty()
     }
 
-    fn require_lang_item(self, lang_item: TraitSolverLangItem) -> DefId {
-        self.require_lang_item(trait_lang_item_to_lang_item(lang_item), DUMMY_SP)
+    fn require_lang_item(self, lang_item: SolverLangItem) -> DefId {
+        self.require_lang_item(solver_lang_item_to_lang_item(lang_item), DUMMY_SP)
     }
 
-    fn is_lang_item(self, def_id: DefId, lang_item: TraitSolverLangItem) -> bool {
-        self.is_lang_item(def_id, trait_lang_item_to_lang_item(lang_item))
+    fn require_trait_lang_item(self, lang_item: SolverTraitLangItem) -> DefId {
+        self.require_lang_item(solver_trait_lang_item_to_lang_item(lang_item), DUMMY_SP)
+    }
+
+    fn require_adt_lang_item(self, lang_item: SolverAdtLangItem) -> DefId {
+        self.require_lang_item(solver_adt_lang_item_to_lang_item(lang_item), DUMMY_SP)
+    }
+
+    fn is_lang_item(self, def_id: DefId, lang_item: SolverLangItem) -> bool {
+        self.is_lang_item(def_id, solver_lang_item_to_lang_item(lang_item))
+    }
+
+    fn is_trait_lang_item(self, def_id: DefId, lang_item: SolverTraitLangItem) -> bool {
+        self.is_lang_item(def_id, solver_trait_lang_item_to_lang_item(lang_item))
+    }
+
+    fn is_adt_lang_item(self, def_id: DefId, lang_item: SolverAdtLangItem) -> bool {
+        self.is_lang_item(def_id, solver_adt_lang_item_to_lang_item(lang_item))
     }
 
     fn is_default_trait(self, def_id: DefId) -> bool {
         self.is_default_trait(def_id)
     }
 
-    fn as_lang_item(self, def_id: DefId) -> Option<TraitSolverLangItem> {
-        lang_item_to_trait_lang_item(self.lang_items().from_def_id(def_id)?)
+    fn as_lang_item(self, def_id: DefId) -> Option<SolverLangItem> {
+        lang_item_to_solver_lang_item(self.lang_items().from_def_id(def_id)?)
+    }
+
+    fn as_trait_lang_item(self, def_id: DefId) -> Option<SolverTraitLangItem> {
+        lang_item_to_solver_trait_lang_item(self.lang_items().from_def_id(def_id)?)
+    }
+
+    fn as_adt_lang_item(self, def_id: DefId) -> Option<SolverAdtLangItem> {
+        lang_item_to_solver_adt_lang_item(self.lang_items().from_def_id(def_id)?)
     }
 
     fn associated_type_def_ids(self, def_id: DefId) -> impl IntoIterator<Item = DefId> {
@@ -541,7 +574,7 @@ impl<'tcx> Interner for TyCtxt<'tcx> {
             | ty::Ref(_, _, _)
             | ty::FnDef(_, _)
             | ty::FnPtr(..)
-            | ty::Dynamic(_, _, _)
+            | ty::Dynamic(_, _)
             | ty::Closure(..)
             | ty::CoroutineClosure(..)
             | ty::Coroutine(_, _)
@@ -618,7 +651,11 @@ impl<'tcx> Interner for TyCtxt<'tcx> {
             | ty::Bound(_, _) => bug!("unexpected self type: {self_ty}"),
         }
 
-        let trait_impls = tcx.trait_impls_of(trait_def_id);
+        #[allow(rustc::usage_of_type_ir_traits)]
+        self.for_each_blanket_impl(trait_def_id, f)
+    }
+    fn for_each_blanket_impl(self, trait_def_id: DefId, mut f: impl FnMut(DefId)) {
+        let trait_impls = self.trait_impls_of(trait_def_id);
         for &impl_def_id in trait_impls.blanket_impls() {
             f(impl_def_id);
         }
@@ -724,19 +761,33 @@ impl<'tcx> Interner for TyCtxt<'tcx> {
             self.opaque_types_defined_by(defining_anchor).iter().chain(coroutines_defined_by),
         )
     }
+
+    type Probe = &'tcx inspect::Probe<TyCtxt<'tcx>>;
+    fn mk_probe(self, probe: inspect::Probe<Self>) -> &'tcx inspect::Probe<TyCtxt<'tcx>> {
+        self.arena.alloc(probe)
+    }
+    fn evaluate_root_goal_for_proof_tree_raw(
+        self,
+        canonical_goal: CanonicalInput<'tcx>,
+    ) -> (QueryResult<'tcx>, &'tcx inspect::Probe<TyCtxt<'tcx>>) {
+        self.evaluate_root_goal_for_proof_tree_raw(canonical_goal)
+    }
 }
 
 macro_rules! bidirectional_lang_item_map {
-    ($($name:ident),+ $(,)?) => {
-        fn trait_lang_item_to_lang_item(lang_item: TraitSolverLangItem) -> LangItem {
+    (
+        $solver_ty:ident, $to_solver:ident, $from_solver:ident;
+        $($name:ident),+ $(,)?
+    ) => {
+        fn $from_solver(lang_item: $solver_ty) -> LangItem {
             match lang_item {
-                $(TraitSolverLangItem::$name => LangItem::$name,)+
+                $($solver_ty::$name => LangItem::$name,)+
             }
         }
 
-        fn lang_item_to_trait_lang_item(lang_item: LangItem) -> Option<TraitSolverLangItem> {
+        fn $to_solver(lang_item: LangItem) -> Option<$solver_ty> {
             Some(match lang_item {
-                $(LangItem::$name => TraitSolverLangItem::$name,)+
+                $(LangItem::$name => $solver_ty::$name,)+
                 _ => return None,
             })
         }
@@ -744,40 +795,57 @@ macro_rules! bidirectional_lang_item_map {
 }
 
 bidirectional_lang_item_map! {
+    SolverLangItem, lang_item_to_solver_lang_item, solver_lang_item_to_lang_item;
+
+// tidy-alphabetical-start
+    AsyncFnKindUpvars,
+    AsyncFnOnceOutput,
+    CallOnceFuture,
+    CallRefFuture,
+    CoroutineReturn,
+    CoroutineYield,
+    DynMetadata,
+    FutureOutput,
+    Metadata,
+// tidy-alphabetical-end
+}
+
+bidirectional_lang_item_map! {
+    SolverAdtLangItem, lang_item_to_solver_adt_lang_item, solver_adt_lang_item_to_lang_item;
+
+// tidy-alphabetical-start
+    Option,
+    Poll,
+// tidy-alphabetical-end
+}
+
+bidirectional_lang_item_map! {
+    SolverTraitLangItem, lang_item_to_solver_trait_lang_item, solver_trait_lang_item_to_lang_item;
+
 // tidy-alphabetical-start
     AsyncFn,
     AsyncFnKindHelper,
-    AsyncFnKindUpvars,
     AsyncFnMut,
     AsyncFnOnce,
     AsyncFnOnceOutput,
     AsyncIterator,
     BikeshedGuaranteedNoDrop,
-    CallOnceFuture,
-    CallRefFuture,
     Clone,
     Copy,
     Coroutine,
-    CoroutineReturn,
-    CoroutineYield,
     Destruct,
     DiscriminantKind,
     Drop,
-    DynMetadata,
     Fn,
     FnMut,
     FnOnce,
     FnPtrTrait,
     FusedIterator,
     Future,
-    FutureOutput,
     Iterator,
     MetaSized,
-    Metadata,
-    Option,
     PointeeSized,
     PointeeTrait,
-    Poll,
     Sized,
     TransmuteTrait,
     Tuple,
@@ -1041,11 +1109,13 @@ const NUM_PREINTERNED_TY_VARS: u32 = 100;
 const NUM_PREINTERNED_FRESH_TYS: u32 = 20;
 const NUM_PREINTERNED_FRESH_INT_TYS: u32 = 3;
 const NUM_PREINTERNED_FRESH_FLOAT_TYS: u32 = 3;
+const NUM_PREINTERNED_ANON_BOUND_TYS_I: u32 = 3;
+const NUM_PREINTERNED_ANON_BOUND_TYS_V: u32 = 20;
 
 // This number may seem high, but it is reached in all but the smallest crates.
 const NUM_PREINTERNED_RE_VARS: u32 = 500;
-const NUM_PREINTERNED_RE_LATE_BOUNDS_I: u32 = 2;
-const NUM_PREINTERNED_RE_LATE_BOUNDS_V: u32 = 20;
+const NUM_PREINTERNED_ANON_RE_BOUNDS_I: u32 = 3;
+const NUM_PREINTERNED_ANON_RE_BOUNDS_V: u32 = 20;
 
 pub struct CommonTypes<'tcx> {
     pub unit: Ty<'tcx>,
@@ -1088,6 +1158,11 @@ pub struct CommonTypes<'tcx> {
 
     /// Pre-interned `Infer(ty::FreshFloatTy(n))` for small values of `n`.
     pub fresh_float_tys: Vec<Ty<'tcx>>,
+
+    /// Pre-interned values of the form:
+    /// `Bound(DebruijnIndex(i), BoundTy { var: v, kind: BoundTyKind::Anon})`
+    /// for small values of `i` and `v`.
+    pub anon_bound_tys: Vec<Vec<Ty<'tcx>>>,
 }
 
 pub struct CommonLifetimes<'tcx> {
@@ -1101,9 +1176,9 @@ pub struct CommonLifetimes<'tcx> {
     pub re_vars: Vec<Region<'tcx>>,
 
     /// Pre-interned values of the form:
-    /// `ReBound(DebruijnIndex(i), BoundRegion { var: v, kind: BrAnon })`
+    /// `ReBound(DebruijnIndex(i), BoundRegion { var: v, kind: BoundRegionKind::Anon })`
     /// for small values of `i` and `v`.
-    pub re_late_bounds: Vec<Vec<Region<'tcx>>>,
+    pub anon_re_bounds: Vec<Vec<Region<'tcx>>>,
 }
 
 pub struct CommonConsts<'tcx> {
@@ -1130,6 +1205,19 @@ impl<'tcx> CommonTypes<'tcx> {
             (0..NUM_PREINTERNED_FRESH_INT_TYS).map(|n| mk(Infer(ty::FreshIntTy(n)))).collect();
         let fresh_float_tys: Vec<_> =
             (0..NUM_PREINTERNED_FRESH_FLOAT_TYS).map(|n| mk(Infer(ty::FreshFloatTy(n)))).collect();
+
+        let anon_bound_tys = (0..NUM_PREINTERNED_ANON_BOUND_TYS_I)
+            .map(|i| {
+                (0..NUM_PREINTERNED_ANON_BOUND_TYS_V)
+                    .map(|v| {
+                        mk(ty::Bound(
+                            ty::DebruijnIndex::from(i),
+                            ty::BoundTy { var: ty::BoundVar::from(v), kind: ty::BoundTyKind::Anon },
+                        ))
+                    })
+                    .collect()
+            })
+            .collect();
 
         CommonTypes {
             unit: mk(Tuple(List::empty())),
@@ -1161,6 +1249,7 @@ impl<'tcx> CommonTypes<'tcx> {
             fresh_tys,
             fresh_int_tys,
             fresh_float_tys,
+            anon_bound_tys,
         }
     }
 }
@@ -1176,9 +1265,9 @@ impl<'tcx> CommonLifetimes<'tcx> {
         let re_vars =
             (0..NUM_PREINTERNED_RE_VARS).map(|n| mk(ty::ReVar(ty::RegionVid::from(n)))).collect();
 
-        let re_late_bounds = (0..NUM_PREINTERNED_RE_LATE_BOUNDS_I)
+        let anon_re_bounds = (0..NUM_PREINTERNED_ANON_RE_BOUNDS_I)
             .map(|i| {
-                (0..NUM_PREINTERNED_RE_LATE_BOUNDS_V)
+                (0..NUM_PREINTERNED_ANON_RE_BOUNDS_V)
                     .map(|v| {
                         mk(ty::ReBound(
                             ty::DebruijnIndex::from(i),
@@ -1196,7 +1285,7 @@ impl<'tcx> CommonLifetimes<'tcx> {
             re_static: mk(ty::ReStatic),
             re_erased: mk(ty::ReErased),
             re_vars,
-            re_late_bounds,
+            anon_re_bounds,
         }
     }
 }
@@ -1360,7 +1449,7 @@ impl<'tcx> TyCtxtFeed<'tcx, LocalDefId> {
         let bodies = Default::default();
         let attrs = hir::AttributeMap::EMPTY;
 
-        let (opt_hash_including_bodies, _, _) =
+        let rustc_middle::hir::Hashes { opt_hash_including_bodies, .. } =
             self.tcx.hash_owner_nodes(node, &bodies, &attrs.map, &[], attrs.define_opaque);
         let node = node.into();
         self.opt_hir_owner_nodes(Some(self.tcx.arena.alloc(hir::OwnerNodes {
@@ -1400,6 +1489,8 @@ pub struct TyCtxt<'tcx> {
 }
 
 impl<'tcx> LintEmitter for TyCtxt<'tcx> {
+    type Id = HirId;
+
     fn emit_node_span_lint(
         self,
         lint: &'static Lint,
@@ -1625,7 +1716,11 @@ impl<'tcx> TyCtxt<'tcx> {
 
     /// Allocates a read-only byte or string literal for `mir::interpret` with alignment 1.
     /// Returns the same `AllocId` if called again with the same bytes.
-    pub fn allocate_bytes_dedup(self, bytes: &[u8], salt: usize) -> interpret::AllocId {
+    pub fn allocate_bytes_dedup<'a>(
+        self,
+        bytes: impl Into<Cow<'a, [u8]>>,
+        salt: usize,
+    ) -> interpret::AllocId {
         // Create an allocation that just contains these bytes.
         let alloc = interpret::Allocation::from_bytes_byte_aligned_immutable(bytes, ());
         let alloc = self.mk_const_alloc(alloc);
@@ -2181,7 +2276,16 @@ impl<'tcx> TyCtxt<'tcx> {
 
         let is_impl_item = match self.hir_node_by_def_id(suitable_region_binding_scope) {
             Node::Item(..) | Node::TraitItem(..) => false,
-            Node::ImplItem(..) => self.is_bound_region_in_impl_item(suitable_region_binding_scope),
+            Node::ImplItem(impl_item) => match impl_item.impl_kind {
+                // For now, we do not try to target impls of traits. This is
+                // because this message is going to suggest that the user
+                // change the fn signature, but they may not be free to do so,
+                // since the signature must match the trait.
+                //
+                // FIXME(#42706) -- in some cases, we could do better here.
+                hir::ImplItemImplKind::Trait { .. } => true,
+                _ => false,
+            },
             _ => false,
         };
 
@@ -2233,21 +2337,6 @@ impl<'tcx> TyCtxt<'tcx> {
             }
         }
         None
-    }
-
-    /// Checks if the bound region is in Impl Item.
-    pub fn is_bound_region_in_impl_item(self, suitable_region_binding_scope: LocalDefId) -> bool {
-        let container_id = self.parent(suitable_region_binding_scope.to_def_id());
-        if self.impl_trait_ref(container_id).is_some() {
-            // For now, we do not try to target impls of traits. This is
-            // because this message is going to suggest that the user
-            // change the fn signature, but they may not be free to do so,
-            // since the signature must match the trait.
-            //
-            // FIXME(#42706) -- in some cases, we could do better here.
-            return true;
-        }
-        false
     }
 
     /// Determines whether identifiers in the assembly have strict naming rules.
@@ -3373,6 +3462,11 @@ impl<'tcx> TyCtxt<'tcx> {
         self.resolutions(()).module_children.get(&def_id).map_or(&[], |v| &v[..])
     }
 
+    /// Return the crate imported by given use item.
+    pub fn extern_mod_stmt_cnum(self, def_id: LocalDefId) -> Option<CrateNum> {
+        self.resolutions(()).extern_crate_map.get(&def_id).copied()
+    }
+
     pub fn resolver_for_lowering(self) -> &'tcx Steal<(ty::ResolverAstLowering, Arc<ast::Crate>)> {
         self.resolver_for_lowering_raw(()).0
     }
@@ -3410,6 +3504,20 @@ impl<'tcx> TyCtxt<'tcx> {
     pub fn do_not_recommend_impl(self, def_id: DefId) -> bool {
         self.get_diagnostic_attr(def_id, sym::do_not_recommend).is_some()
     }
+
+    /// Whether this def is one of the special bin crate entrypoint functions that must have a
+    /// monomorphization and also not be internalized in the bin crate.
+    pub fn is_entrypoint(self, def_id: DefId) -> bool {
+        if self.is_lang_item(def_id, LangItem::Start) {
+            return true;
+        }
+        if let Some((entry_def_id, _)) = self.entry_fn(())
+            && entry_def_id == def_id
+        {
+            return true;
+        }
+        false
+    }
 }
 
 /// Parameter attributes that can only be determined by examining the body of a function instead
@@ -3428,10 +3536,6 @@ pub struct DeducedParamAttrs {
 }
 
 pub fn provide(providers: &mut Providers) {
-    providers.maybe_unused_trait_imports =
-        |tcx, ()| &tcx.resolutions(()).maybe_unused_trait_imports;
-    providers.extern_mod_stmt_cnum =
-        |tcx, id| tcx.resolutions(()).extern_crate_map.get(&id).cloned();
     providers.is_panic_runtime =
         |tcx, LocalCrate| contains_name(tcx.hir_krate_attrs(), sym::panic_runtime);
     providers.is_compiler_builtins =

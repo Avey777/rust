@@ -223,13 +223,14 @@ pub macro assert_matches {
 /// }
 /// ```
 ///
-/// The `cfg_select!` macro can also be used in expression position:
+/// The `cfg_select!` macro can also be used in expression position, with or without braces on the
+/// right-hand side:
 ///
 /// ```
 /// #![feature(cfg_select)]
 ///
 /// let _some_string = cfg_select! {
-///     unix => { "With great power comes great electricity bills" }
+///     unix => "With great power comes great electricity bills",
 ///     _ => { "Behind every successful diet is an unwatched pizza" }
 /// };
 /// ```
@@ -271,7 +272,10 @@ pub macro cfg_select($($tt:tt)*) {
 /// // expression given.
 /// debug_assert!(true);
 ///
-/// fn some_expensive_computation() -> bool { true } // a very simple function
+/// fn some_expensive_computation() -> bool {
+///     // Some expensive computation here
+///     true
+/// }
 /// debug_assert!(some_expensive_computation());
 ///
 /// // assert with a custom message
@@ -426,8 +430,10 @@ pub macro debug_assert_matches($($arg:tt)*) {
 #[macro_export]
 #[stable(feature = "matches_macro", since = "1.42.0")]
 #[rustc_diagnostic_item = "matches_macro"]
+#[allow_internal_unstable(non_exhaustive_omitted_patterns_lint, stmt_expr_attributes)]
 macro_rules! matches {
     ($expression:expr, $pattern:pat $(if $guard:expr)? $(,)?) => {
+        #[allow(non_exhaustive_omitted_patterns)]
         match $expression {
             $pattern $(if $guard)? => true,
             _ => false
@@ -1011,6 +1017,7 @@ pub(crate) mod builtin {
     )]
     #[allow_internal_unstable(fmt_internals)]
     #[rustc_builtin_macro]
+    #[doc(hidden)]
     #[macro_export]
     macro_rules! format_args_nl {
         ($fmt:expr) => {{ /* compiler built-in */ }};
@@ -1489,6 +1496,7 @@ pub(crate) mod builtin {
     ///   (or explicitly returns `-> ()`). Otherwise, it must be set to one of the allowed activities.
     #[unstable(feature = "autodiff", issue = "124509")]
     #[allow_internal_unstable(rustc_attrs)]
+    #[allow_internal_unstable(core_intrinsics)]
     #[rustc_builtin_macro]
     pub macro autodiff_forward($item:item) {
         /* compiler built-in */
@@ -1507,6 +1515,7 @@ pub(crate) mod builtin {
     ///   (or explicitly returns `-> ()`). Otherwise, it must be set to one of the allowed activities.
     #[unstable(feature = "autodiff", issue = "124509")]
     #[allow_internal_unstable(rustc_attrs)]
+    #[allow_internal_unstable(core_intrinsics)]
     #[rustc_builtin_macro]
     pub macro autodiff_reverse($item:item) {
         /* compiler built-in */
@@ -1545,7 +1554,10 @@ pub(crate) mod builtin {
     /// // expression given.
     /// assert!(true);
     ///
-    /// fn some_computation() -> bool { true } // a very simple function
+    /// fn some_computation() -> bool {
+    ///     // Some expensive computation here
+    ///     true
+    /// }
     ///
     /// assert!(some_computation());
     ///
@@ -1758,5 +1770,16 @@ pub(crate) mod builtin {
     )]
     pub macro deref($pat:pat) {
         builtin # deref($pat)
+    }
+
+    /// Derive macro generating an impl of the trait `From`.
+    /// Currently, it can only be used on single-field structs.
+    // Note that the macro is in a different module than the `From` trait,
+    // to avoid triggering an unstable feature being used if someone imports
+    // `std::convert::From`.
+    #[rustc_builtin_macro]
+    #[unstable(feature = "derive_from", issue = "144889")]
+    pub macro From($item: item) {
+        /* compiler built-in */
     }
 }

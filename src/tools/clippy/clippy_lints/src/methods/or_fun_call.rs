@@ -2,6 +2,7 @@ use std::ops::ControlFlow;
 
 use clippy_utils::diagnostics::span_lint_and_sugg;
 use clippy_utils::eager_or_lazy::switch_to_lazy_eval;
+use clippy_utils::higher::VecArgs;
 use clippy_utils::source::snippet_with_context;
 use clippy_utils::ty::{expr_type_is_certain, implements_trait, is_type_diagnostic_item};
 use clippy_utils::visitors::for_each_expr;
@@ -94,6 +95,12 @@ pub(super) fn check<'tcx>(
             )
         };
         if in_sugg_method_implementation {
+            return false;
+        }
+
+        // `.unwrap_or(vec![])` is as readable as `.unwrap_or_default()`. And if the expression is a
+        // non-empty `Vec`, then it will not be a default value anyway. Bail out in all cases.
+        if call_expr.and_then(|call_expr| VecArgs::hir(cx, call_expr)).is_some() {
             return false;
         }
 
@@ -242,15 +249,23 @@ pub(super) fn check<'tcx>(
         let inner_arg = peel_blocks(arg);
         for_each_expr(cx, inner_arg, |ex| {
             let is_top_most_expr = ex.hir_id == inner_arg.hir_id;
-            if let hir::ExprKind::Call(fun, fun_args) = ex.kind {
-                let fun_span = if fun_args.is_empty() && is_top_most_expr {
-                    Some(fun.span)
-                } else {
-                    None
-                };
-                if check_or_fn_call(cx, name, method_span, receiver, arg, Some(lambda), expr.span, fun_span) {
-                    return ControlFlow::Break(());
-                }
+            match ex.kind {
+                hir::ExprKind::Call(fun, fun_args) => {
+                    let fun_span = if fun_args.is_empty() && is_top_most_expr {
+                        Some(fun.span)
+                    } else {
+                        None
+                    };
+                    if check_or_fn_call(cx, name, method_span, receiver, arg, Some(lambda), expr.span, fun_span) {
+                        return ControlFlow::Break(());
+                    }
+                },
+                hir::ExprKind::MethodCall(..) => {
+                    if check_or_fn_call(cx, name, method_span, receiver, arg, Some(lambda), expr.span, None) {
+                        return ControlFlow::Break(());
+                    }
+                },
+                _ => {},
             }
             ControlFlow::Continue(())
         });

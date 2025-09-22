@@ -1,6 +1,7 @@
+use super::each_addr;
 use crate::fmt;
 use crate::io::{self, BorrowedCursor, IoSlice, IoSliceMut};
-use crate::net::{Ipv4Addr, Ipv6Addr, Shutdown, SocketAddr};
+use crate::net::{Ipv4Addr, Ipv6Addr, Shutdown, SocketAddr, ToSocketAddrs};
 use crate::sync::{Arc, Mutex};
 use crate::sys::unsupported;
 use crate::time::Duration;
@@ -15,13 +16,17 @@ pub struct TcpStream {
 }
 
 impl TcpStream {
-    pub fn connect(addr: io::Result<&SocketAddr>) -> io::Result<TcpStream> {
-        let inner = tcp::Tcp::connect(addr?, None)?;
-        Ok(Self {
-            inner,
-            read_timeout: Arc::new(Mutex::new(None)),
-            write_timeout: Arc::new(Mutex::new(None)),
-        })
+    pub fn connect<A: ToSocketAddrs>(addr: A) -> io::Result<TcpStream> {
+        return each_addr(addr, inner);
+
+        fn inner(addr: &SocketAddr) -> io::Result<TcpStream> {
+            let inner = tcp::Tcp::connect(addr, None)?;
+            Ok(TcpStream {
+                inner,
+                read_timeout: Arc::new(Mutex::new(None)),
+                write_timeout: Arc::new(Mutex::new(None)),
+            })
+        }
     }
 
     pub fn connect_timeout(addr: &SocketAddr, timeout: Duration) -> io::Result<TcpStream> {
@@ -86,11 +91,11 @@ impl TcpStream {
     }
 
     pub fn peer_addr(&self) -> io::Result<SocketAddr> {
-        unsupported()
+        self.inner.peer_addr()
     }
 
     pub fn socket_addr(&self) -> io::Result<SocketAddr> {
-        unsupported()
+        self.inner.socket_addr()
     }
 
     pub fn shutdown(&self, _: Shutdown) -> io::Result<()> {
@@ -114,7 +119,7 @@ impl TcpStream {
     }
 
     pub fn nodelay(&self) -> io::Result<bool> {
-        unsupported()
+        self.inner.nodelay()
     }
 
     pub fn set_ttl(&self, _: u32) -> io::Result<()> {
@@ -122,7 +127,7 @@ impl TcpStream {
     }
 
     pub fn ttl(&self) -> io::Result<u32> {
-        unsupported()
+        self.inner.ttl()
     }
 
     pub fn take_error(&self) -> io::Result<Option<io::Error>> {
@@ -140,60 +145,62 @@ impl fmt::Debug for TcpStream {
     }
 }
 
-pub struct TcpListener(!);
+pub struct TcpListener {
+    inner: tcp::Tcp,
+}
 
 impl TcpListener {
-    pub fn bind(_: io::Result<&SocketAddr>) -> io::Result<TcpListener> {
+    pub fn bind<A: ToSocketAddrs>(_: A) -> io::Result<TcpListener> {
         unsupported()
     }
 
     pub fn socket_addr(&self) -> io::Result<SocketAddr> {
-        self.0
+        unsupported()
     }
 
     pub fn accept(&self) -> io::Result<(TcpStream, SocketAddr)> {
-        self.0
+        unsupported()
     }
 
     pub fn duplicate(&self) -> io::Result<TcpListener> {
-        self.0
+        unsupported()
     }
 
     pub fn set_ttl(&self, _: u32) -> io::Result<()> {
-        self.0
+        unsupported()
     }
 
     pub fn ttl(&self) -> io::Result<u32> {
-        self.0
+        self.inner.ttl()
     }
 
     pub fn set_only_v6(&self, _: bool) -> io::Result<()> {
-        self.0
+        unsupported()
     }
 
     pub fn only_v6(&self) -> io::Result<bool> {
-        self.0
+        unsupported()
     }
 
     pub fn take_error(&self) -> io::Result<Option<io::Error>> {
-        self.0
+        unsupported()
     }
 
     pub fn set_nonblocking(&self, _: bool) -> io::Result<()> {
-        self.0
+        unsupported()
     }
 }
 
 impl fmt::Debug for TcpListener {
     fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0
+        todo!()
     }
 }
 
 pub struct UdpSocket(!);
 
 impl UdpSocket {
-    pub fn bind(_: io::Result<&SocketAddr>) -> io::Result<UdpSocket> {
+    pub fn bind<A: ToSocketAddrs>(_: A) -> io::Result<UdpSocket> {
         unsupported()
     }
 
@@ -313,7 +320,7 @@ impl UdpSocket {
         self.0
     }
 
-    pub fn connect(&self, _: io::Result<&SocketAddr>) -> io::Result<()> {
+    pub fn connect<A: ToSocketAddrs>(&self, _: A) -> io::Result<()> {
         self.0
     }
 }
@@ -326,12 +333,6 @@ impl fmt::Debug for UdpSocket {
 
 pub struct LookupHost(!);
 
-impl LookupHost {
-    pub fn port(&self) -> u16 {
-        self.0
-    }
-}
-
 impl Iterator for LookupHost {
     type Item = SocketAddr;
     fn next(&mut self) -> Option<SocketAddr> {
@@ -339,18 +340,6 @@ impl Iterator for LookupHost {
     }
 }
 
-impl TryFrom<&str> for LookupHost {
-    type Error = io::Error;
-
-    fn try_from(_v: &str) -> io::Result<LookupHost> {
-        unsupported()
-    }
-}
-
-impl<'a> TryFrom<(&'a str, u16)> for LookupHost {
-    type Error = io::Error;
-
-    fn try_from(_v: (&'a str, u16)) -> io::Result<LookupHost> {
-        unsupported()
-    }
+pub fn lookup_host(_host: &str, _port: u16) -> io::Result<LookupHost> {
+    unsupported()
 }

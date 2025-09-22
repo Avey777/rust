@@ -516,8 +516,6 @@ impl<T> Arc<T> {
     /// # Examples
     ///
     /// ```
-    /// #![feature(new_zeroed_alloc)]
-    ///
     /// use std::sync::Arc;
     ///
     /// let zero = Arc::<u32>::new_zeroed();
@@ -529,7 +527,7 @@ impl<T> Arc<T> {
     /// [zeroed]: mem::MaybeUninit::zeroed
     #[cfg(not(no_global_oom_handling))]
     #[inline]
-    #[unstable(feature = "new_zeroed_alloc", issue = "129396")]
+    #[stable(feature = "new_zeroed_alloc", since = "CURRENT_RUSTC_VERSION")]
     #[must_use]
     pub fn new_zeroed() -> Arc<mem::MaybeUninit<T>> {
         unsafe {
@@ -603,7 +601,6 @@ impl<T> Arc<T> {
     /// # Ok::<(), std::alloc::AllocError>(())
     /// ```
     #[unstable(feature = "allocator_api", issue = "32838")]
-    // #[unstable(feature = "new_uninit", issue = "63291")]
     pub fn try_new_uninit() -> Result<Arc<mem::MaybeUninit<T>>, AllocError> {
         unsafe {
             Ok(Arc::from_ptr(Arc::try_allocate_for_layout(
@@ -636,7 +633,6 @@ impl<T> Arc<T> {
     ///
     /// [zeroed]: mem::MaybeUninit::zeroed
     #[unstable(feature = "allocator_api", issue = "32838")]
-    // #[unstable(feature = "new_uninit", issue = "63291")]
     pub fn try_new_zeroed() -> Result<Arc<mem::MaybeUninit<T>>, AllocError> {
         unsafe {
             Ok(Arc::from_ptr(Arc::try_allocate_for_layout(
@@ -703,7 +699,6 @@ impl<T, A: Allocator> Arc<T, A> {
     /// ```
     #[cfg(not(no_global_oom_handling))]
     #[unstable(feature = "allocator_api", issue = "32838")]
-    // #[unstable(feature = "new_uninit", issue = "63291")]
     #[inline]
     pub fn new_uninit_in(alloc: A) -> Arc<mem::MaybeUninit<T>, A> {
         unsafe {
@@ -741,7 +736,6 @@ impl<T, A: Allocator> Arc<T, A> {
     /// [zeroed]: mem::MaybeUninit::zeroed
     #[cfg(not(no_global_oom_handling))]
     #[unstable(feature = "allocator_api", issue = "32838")]
-    // #[unstable(feature = "new_uninit", issue = "63291")]
     #[inline]
     pub fn new_zeroed_in(alloc: A) -> Arc<mem::MaybeUninit<T>, A> {
         unsafe {
@@ -927,7 +921,6 @@ impl<T, A: Allocator> Arc<T, A> {
     /// # Ok::<(), std::alloc::AllocError>(())
     /// ```
     #[unstable(feature = "allocator_api", issue = "32838")]
-    // #[unstable(feature = "new_uninit", issue = "63291")]
     #[inline]
     pub fn try_new_uninit_in(alloc: A) -> Result<Arc<mem::MaybeUninit<T>, A>, AllocError> {
         unsafe {
@@ -966,7 +959,6 @@ impl<T, A: Allocator> Arc<T, A> {
     ///
     /// [zeroed]: mem::MaybeUninit::zeroed
     #[unstable(feature = "allocator_api", issue = "32838")]
-    // #[unstable(feature = "new_uninit", issue = "63291")]
     #[inline]
     pub fn try_new_zeroed_in(alloc: A) -> Result<Arc<mem::MaybeUninit<T>, A>, AllocError> {
         unsafe {
@@ -1197,8 +1189,6 @@ impl<T> Arc<[T]> {
     /// # Examples
     ///
     /// ```
-    /// #![feature(new_zeroed_alloc)]
-    ///
     /// use std::sync::Arc;
     ///
     /// let values = Arc::<[u32]>::new_zeroed_slice(3);
@@ -1210,7 +1200,7 @@ impl<T> Arc<[T]> {
     /// [zeroed]: mem::MaybeUninit::zeroed
     #[cfg(not(no_global_oom_handling))]
     #[inline]
-    #[unstable(feature = "new_zeroed_alloc", issue = "129396")]
+    #[stable(feature = "new_zeroed_alloc", since = "CURRENT_RUSTC_VERSION")]
     #[must_use]
     pub fn new_zeroed_slice(len: usize) -> Arc<[mem::MaybeUninit<T>]> {
         unsafe {
@@ -3654,6 +3644,19 @@ impl<T> Default for Arc<[T]> {
     }
 }
 
+#[cfg(not(no_global_oom_handling))]
+#[stable(feature = "pin_default_impls", since = "CURRENT_RUSTC_VERSION")]
+impl<T> Default for Pin<Arc<T>>
+where
+    T: ?Sized,
+    Arc<T>: Default,
+{
+    #[inline]
+    fn default() -> Self {
+        unsafe { Pin::new_unchecked(Arc::<T>::default()) }
+    }
+}
+
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T: ?Sized + Hash, A: Allocator> Hash for Arc<T, A> {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -4100,11 +4103,6 @@ impl<T: ?Sized, A: Allocator> Drop for UniqueArcUninit<T, A> {
 
 #[stable(feature = "arc_error", since = "1.52.0")]
 impl<T: core::error::Error + ?Sized> core::error::Error for Arc<T> {
-    #[allow(deprecated, deprecated_in_future)]
-    fn description(&self) -> &str {
-        core::error::Error::description(&**self)
-    }
-
     #[allow(deprecated)]
     fn cause(&self) -> Option<&dyn core::error::Error> {
         core::error::Error::cause(&**self)

@@ -140,7 +140,7 @@ impl<'a, 'tcx, V: CodegenObject> OperandRef<'tcx, V> {
 
     pub(crate) fn from_const<Bx: BuilderMethods<'a, 'tcx, Value = V>>(
         bx: &mut Bx,
-        val: mir::ConstValue<'tcx>,
+        val: mir::ConstValue,
         ty: Ty<'tcx>,
     ) -> Self {
         let layout = bx.layout_of(ty);
@@ -154,14 +154,11 @@ impl<'a, 'tcx, V: CodegenObject> OperandRef<'tcx, V> {
                 OperandValue::Immediate(llval)
             }
             ConstValue::ZeroSized => return OperandRef::zero_sized(layout),
-            ConstValue::Slice { data, meta } => {
+            ConstValue::Slice { alloc_id, meta } => {
                 let BackendRepr::ScalarPair(a_scalar, _) = layout.backend_repr else {
                     bug!("from_const: invalid ScalarPair layout: {:#?}", layout);
                 };
-                let a = Scalar::from_pointer(
-                    Pointer::new(bx.tcx().reserve_and_set_memory_alloc(data).into(), Size::ZERO),
-                    &bx.tcx(),
-                );
+                let a = Scalar::from_pointer(Pointer::new(alloc_id.into(), Size::ZERO), &bx.tcx());
                 let a_llval = bx.scalar_to_backend(
                     a,
                     a_scalar,
@@ -329,31 +326,15 @@ impl<'a, 'tcx, V: CodegenObject> OperandRef<'tcx, V> {
         let offset = self.layout.fields.offset(i);
 
         if !bx.is_backend_ref(self.layout) && bx.is_backend_ref(field) {
-            if let BackendRepr::SimdVector { count, .. } = self.layout.backend_repr
-                && let BackendRepr::Memory { sized: true } = field.backend_repr
-                && count.is_power_of_two()
-            {
-                assert_eq!(field.size, self.layout.size);
-                // This is being deprecated, but for now stdarch still needs it for
-                // Newtype vector of array, e.g. #[repr(simd)] struct S([i32; 4]);
-                let place = PlaceRef::alloca(bx, field);
-                self.val.store(bx, place.val.with_type(self.layout));
-                return bx.load_operand(place);
-            } else {
-                // Part of https://github.com/rust-lang/compiler-team/issues/838
-                bug!("Non-ref type {self:?} cannot project to ref field type {field:?}");
-            }
+            // Part of https://github.com/rust-lang/compiler-team/issues/838
+            span_bug!(
+                fx.mir.span,
+                "Non-ref type {self:?} cannot project to ref field type {field:?}",
+            );
         }
 
         let val = if field.is_zst() {
             OperandValue::ZeroSized
-        } else if let BackendRepr::SimdVector { .. } = self.layout.backend_repr {
-            // codegen_transmute_operand doesn't support SIMD, but since the previous
-            // check handled ZSTs, the only possible field access into something SIMD
-            // is to the `non_1zst_field` that's the same SIMD. (Other things, even
-            // just padding, would change the wrapper's representation type.)
-            assert_eq!(field.size, self.layout.size);
-            self.val
         } else if field.size == self.layout.size {
             assert_eq!(offset.bytes(), 0);
             fx.codegen_transmute_operand(bx, *self, field)
@@ -517,6 +498,35 @@ impl<'a, 'tcx, V: CodegenObject> OperandRef<'tcx, V> {
                         bx.cx().const_uint(cast_to, niche_variants.start().as_u32() as u64);
                     (is_niche, tagged_discr, 0)
                 } else {
+                    // Thanks to parameter attributes and load metadata, LLVM already knows
+                    // the general valid range of the tag. It's possible, though, for there
+                    // to be an impossible value *in the middle*, which those ranges don't
+                    // communicate, so it's worth an `assume` to let the optimizer know.
+                    // Most importantly, this means when optimizing a variant test like
+                    // `SELECT(is_niche, complex, CONST) == CONST` it's ok to simplify that
+                    // to `!is_niche` because the `complex` part can't possibly match.
+                    //
+                    // This was previously asserted on `tagged_discr` below, where the
+                    // impossible value is more obvious, but that caused an intermediate
+                    // value to become multi-use and thus not optimize, so instead this
+                    // assumes on the original input which is always multi-use. See
+                    // <https://github.com/llvm/llvm-project/issues/134024#issuecomment-3131782555>
+                    //
+                    // FIXME: If we ever get range assume operand bundles in LLVM (so we
+                    // don't need the `icmp`s in the instruction stream any more), it
+                    // might be worth moving this back to being on the switch argument
+                    // where it's more obviously applicable.
+                    if niche_variants.contains(&untagged_variant)
+                        && bx.cx().sess().opts.optimize != OptLevel::No
+                    {
+                        let impossible = niche_start
+                            .wrapping_add(u128::from(untagged_variant.as_u32()))
+                            .wrapping_sub(u128::from(niche_variants.start().as_u32()));
+                        let impossible = bx.cx().const_uint_big(tag_llty, impossible);
+                        let ne = bx.icmp(IntPredicate::IntNE, tag, impossible);
+                        bx.assume(ne);
+                    }
+
                     // With multiple niched variants we'll have to actually compute
                     // the variant index from the stored tag.
                     //
@@ -606,20 +616,6 @@ impl<'a, 'tcx, V: CodegenObject> OperandRef<'tcx, V> {
 
                 let untagged_variant_const =
                     bx.cx().const_uint(cast_to, u64::from(untagged_variant.as_u32()));
-
-                // Thanks to parameter attributes and load metadata, LLVM already knows
-                // the general valid range of the tag. It's possible, though, for there
-                // to be an impossible value *in the middle*, which those ranges don't
-                // communicate, so it's worth an `assume` to let the optimizer know.
-                // Most importantly, this means when optimizing a variant test like
-                // `SELECT(is_niche, complex, CONST) == CONST` it's ok to simplify that
-                // to `!is_niche` because the `complex` part can't possibly match.
-                if niche_variants.contains(&untagged_variant)
-                    && bx.cx().sess().opts.optimize != OptLevel::No
-                {
-                    let ne = bx.icmp(IntPredicate::IntNE, tagged_discr, untagged_variant_const);
-                    bx.assume(ne);
-                }
 
                 let discr = bx.select(is_niche, tagged_discr, untagged_variant_const);
 
@@ -940,9 +936,10 @@ impl<'a, 'tcx, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
 
         match self.locals[place_ref.local] {
             LocalRef::Operand(mut o) => {
-                // Moves out of scalar and scalar pair fields are trivial.
-                for elem in place_ref.projection.iter() {
-                    match elem {
+                // We only need to handle the projections that
+                // `LocalAnalyzer::process_place` let make it here.
+                for elem in place_ref.projection {
+                    match *elem {
                         mir::ProjectionElem::Field(f, _) => {
                             assert!(
                                 !o.layout.ty.is_any_ptr(),
@@ -951,17 +948,18 @@ impl<'a, 'tcx, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
                             );
                             o = o.extract_field(self, bx, f.index());
                         }
-                        mir::ProjectionElem::Index(_)
-                        | mir::ProjectionElem::ConstantIndex { .. } => {
-                            // ZSTs don't require any actual memory access.
-                            // FIXME(eddyb) deduplicate this with the identical
-                            // checks in `codegen_consume` and `extract_field`.
-                            let elem = o.layout.field(bx.cx(), 0);
-                            if elem.is_zst() {
-                                o = OperandRef::zero_sized(elem);
-                            } else {
-                                return None;
-                            }
+                        mir::PlaceElem::Downcast(_, vidx) => {
+                            debug_assert_eq!(
+                                o.layout.variants,
+                                abi::Variants::Single { index: vidx },
+                            );
+                            let layout = o.layout.for_variant(bx.cx(), vidx);
+                            o = OperandRef { val: o.val, layout }
+                        }
+                        mir::PlaceElem::Subtype(subtype_ty) => {
+                            let subtype_ty = self.monomorphize(subtype_ty);
+                            let layout = self.cx.layout_of(subtype_ty);
+                            o = OperandRef { val: o.val, layout }
                         }
                         _ => return None,
                     }
