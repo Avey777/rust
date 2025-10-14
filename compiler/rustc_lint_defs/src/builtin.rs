@@ -1601,7 +1601,7 @@ declare_lint! {
     "detects patterns whose meaning will change in Rust 2024",
     @future_incompatible = FutureIncompatibleInfo {
         reason: FutureIncompatibilityReason::EditionSemanticsChange(Edition::Edition2024),
-        reference: "<https://doc.rust-lang.org/nightly/edition-guide/rust-2024/match-ergonomics.html>",
+        reference: "<https://doc.rust-lang.org/edition-guide/rust-2024/match-ergonomics.html>",
     };
 }
 
@@ -2309,10 +2309,10 @@ declare_lint! {
     /// ### Example
     ///
     /// ```rust
-    /// #![cfg_attr(not(bootstrap), feature(sanitize))]
+    /// #![feature(sanitize)]
     ///
     /// #[inline(always)]
-    /// #[cfg_attr(not(bootstrap), sanitize(address = "off"))]
+    /// #[sanitize(address = "off")]
     /// fn x() {}
     ///
     /// fn main() {
@@ -4837,16 +4837,13 @@ declare_lint! {
     ///
     /// ### Example
     ///
-    #[cfg_attr(not(bootstrap), doc = "```rust,compile_fail")]
-    #[cfg_attr(bootstrap, doc = "```rust")]
+    /// ```rust,compile_fail
     /// #![doc = in_root!()]
     ///
     /// macro_rules! in_root { () => { "" } }
     ///
     /// fn main() {}
-    #[cfg_attr(not(bootstrap), doc = "```")]
-    #[cfg_attr(bootstrap, doc = "```")]
-    // ^ Needed to avoid tidy warning about odd number of backticks
+    /// ```
     ///
     /// {{produces}}
     ///

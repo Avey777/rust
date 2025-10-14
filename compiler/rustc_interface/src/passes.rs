@@ -42,7 +42,6 @@ use rustc_span::{
     DUMMY_SP, ErrorGuaranteed, ExpnKind, FileName, SourceFileHash, SourceFileHashAlgorithm, Span,
     Symbol, sym,
 };
-use rustc_target::spec::PanicStrategy;
 use rustc_trait_selection::{solve, traits};
 use tracing::{info, instrument};
 
@@ -282,7 +281,7 @@ fn configure_and_expand(
         feature_err(sess, sym::export_stable, DUMMY_SP, "`sdylib` crate type is unstable").emit();
     }
 
-    if is_proc_macro_crate && sess.panic_strategy() == PanicStrategy::Abort {
+    if is_proc_macro_crate && !sess.panic_strategy().unwinds() {
         sess.dcx().emit_warn(errors::ProcMacroCratePanicAbort);
     }
 
@@ -1096,6 +1095,7 @@ fn run_required_analyses(tcx: TyCtxt<'_>) {
                 tcx.ensure_ok().check_transmutes(def_id);
             }
             tcx.ensure_ok().has_ffi_unwind_calls(def_id);
+            tcx.ensure_ok().check_liveness(def_id);
 
             // If we need to codegen, ensure that we emit all errors from
             // `mir_drops_elaborated_and_const_checked` now, to avoid discovering
@@ -1123,18 +1123,6 @@ fn run_required_analyses(tcx: TyCtxt<'_>) {
 
     sess.time("layout_testing", || layout_test::test_layout(tcx));
     sess.time("abi_testing", || abi_test::test_abi(tcx));
-
-    // If `-Zvalidate-mir` is set, we also want to compute the final MIR for each item
-    // (either its `mir_for_ctfe` or `optimized_mir`) since that helps uncover any bugs
-    // in MIR optimizations that may only be reachable through codegen, or other codepaths
-    // that requires the optimized/ctfe MIR, coroutine bodies, or evaluating consts.
-    if tcx.sess.opts.unstable_opts.validate_mir {
-        sess.time("ensuring_final_MIR_is_computable", || {
-            tcx.par_hir_body_owners(|def_id| {
-                tcx.instance_mir(ty::InstanceKind::Item(def_id.into()));
-            });
-        });
-    }
 }
 
 /// Runs the type-checking, region checking and other miscellaneous analysis
@@ -1200,6 +1188,20 @@ fn analysis(tcx: TyCtxt<'_>, (): ()) {
         // we will fail to emit overlap diagnostics. Thus we invoke it here unconditionally.
         let _ = tcx.all_diagnostic_items(());
     });
+
+    // If `-Zvalidate-mir` is set, we also want to compute the final MIR for each item
+    // (either its `mir_for_ctfe` or `optimized_mir`) since that helps uncover any bugs
+    // in MIR optimizations that may only be reachable through codegen, or other codepaths
+    // that requires the optimized/ctfe MIR, coroutine bodies, or evaluating consts.
+    // Nevertheless, wait after type checking is finished, as optimizing code that does not
+    // type-check is very prone to ICEs.
+    if tcx.sess.opts.unstable_opts.validate_mir {
+        sess.time("ensuring_final_MIR_is_computable", || {
+            tcx.par_hir_body_owners(|def_id| {
+                tcx.instance_mir(ty::InstanceKind::Item(def_id.into()));
+            });
+        });
+    }
 }
 
 /// Runs the codegen backend, after which the AST and analysis can

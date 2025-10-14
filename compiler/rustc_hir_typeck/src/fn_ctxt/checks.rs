@@ -255,7 +255,7 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
                     // No argument expectations are produced if unification fails.
                     let origin = self.misc(call_span);
                     ocx.sup(&origin, self.param_env, expected_output, formal_output)?;
-                    if !ocx.select_where_possible().is_empty() {
+                    if !ocx.try_evaluate_obligations().is_empty() {
                         return Err(TypeError::Mismatch);
                     }
 
@@ -2803,9 +2803,7 @@ impl<'a, 'b, 'tcx> ArgMatchingCtxt<'a, 'b, 'tcx> {
         if let Some((assoc, fn_sig)) = self.similar_assoc(call_name)
             && fn_sig.inputs()[1..]
                 .iter()
-                .zip(input_types.iter())
-                .all(|(expected, found)| self.may_coerce(*expected, *found))
-            && fn_sig.inputs()[1..].len() == input_types.len()
+                .eq_by(input_types, |expected, found| self.may_coerce(*expected, found))
         {
             let assoc_name = assoc.name();
             err.span_suggestion_verbose(

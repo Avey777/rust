@@ -13,14 +13,12 @@ use rustc_target::asm::*;
 use smallvec::SmallVec;
 use tracing::debug;
 
+use crate::attributes;
 use crate::builder::Builder;
 use crate::common::Funclet;
 use crate::context::CodegenCx;
-use crate::llvm::ToLlvmBool;
-use crate::type_::Type;
+use crate::llvm::{self, ToLlvmBool, Type, Value};
 use crate::type_of::LayoutLlvmExt;
-use crate::value::Value;
-use crate::{attributes, llvm};
 
 impl<'ll, 'tcx> AsmBuilderMethods<'tcx> for Builder<'_, 'll, 'tcx> {
     fn codegen_inline_asm(
@@ -340,8 +338,8 @@ impl<'ll, 'tcx> AsmBuilderMethods<'tcx> for Builder<'_, 'll, 'tcx> {
             attrs.push(llvm::AttributeKind::WillReturn.create_attr(self.cx.llcx));
         } else if options.contains(InlineAsmOptions::NOMEM) {
             attrs.push(llvm::MemoryEffects::InaccessibleMemOnly.create_attr(self.cx.llcx));
-        } else {
-            // LLVM doesn't have an attribute to represent ReadOnly + SideEffect
+        } else if options.contains(InlineAsmOptions::READONLY) {
+            attrs.push(llvm::MemoryEffects::ReadOnlyNotPure.create_attr(self.cx.llcx));
         }
         attributes::apply_to_callsite(result, llvm::AttributePlace::Function, &{ attrs });
 
@@ -538,9 +536,7 @@ pub(crate) fn inline_asm_call<'ll>(
             bx.const_u64(u64::from(span.lo().to_u32()) | (u64::from(span.hi().to_u32()) << 32)),
         )
     }));
-    let md = unsafe { llvm::LLVMMDNodeInContext2(bx.llcx, srcloc.as_ptr(), srcloc.len()) };
-    let md = bx.get_metadata_value(md);
-    llvm::LLVMSetMetadata(call, kind, md);
+    bx.cx.set_metadata_node(call, kind, &srcloc);
 
     Some(call)
 }
@@ -662,7 +658,12 @@ fn reg_to_llvm(reg: InlineAsmRegOrRegClass, layout: Option<&TyAndLayout<'_>>) ->
             PowerPC(PowerPCInlineAsmRegClass::reg_nonzero) => "b",
             PowerPC(PowerPCInlineAsmRegClass::freg) => "f",
             PowerPC(PowerPCInlineAsmRegClass::vreg) => "v",
-            PowerPC(PowerPCInlineAsmRegClass::cr) | PowerPC(PowerPCInlineAsmRegClass::xer) => {
+            PowerPC(
+                PowerPCInlineAsmRegClass::cr
+                | PowerPCInlineAsmRegClass::ctr
+                | PowerPCInlineAsmRegClass::lr
+                | PowerPCInlineAsmRegClass::xer,
+            ) => {
                 unreachable!("clobber-only")
             }
             RiscV(RiscVInlineAsmRegClass::reg) => "r",
@@ -830,7 +831,12 @@ fn dummy_output_type<'ll>(cx: &CodegenCx<'ll, '_>, reg: InlineAsmRegClass) -> &'
         PowerPC(PowerPCInlineAsmRegClass::reg_nonzero) => cx.type_i32(),
         PowerPC(PowerPCInlineAsmRegClass::freg) => cx.type_f64(),
         PowerPC(PowerPCInlineAsmRegClass::vreg) => cx.type_vector(cx.type_i32(), 4),
-        PowerPC(PowerPCInlineAsmRegClass::cr) | PowerPC(PowerPCInlineAsmRegClass::xer) => {
+        PowerPC(
+            PowerPCInlineAsmRegClass::cr
+            | PowerPCInlineAsmRegClass::ctr
+            | PowerPCInlineAsmRegClass::lr
+            | PowerPCInlineAsmRegClass::xer,
+        ) => {
             unreachable!("clobber-only")
         }
         RiscV(RiscVInlineAsmRegClass::reg) => cx.type_i32(),

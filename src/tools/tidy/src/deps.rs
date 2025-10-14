@@ -367,6 +367,7 @@ const PERMITTED_RUSTC_DEPENDENCIES: &[&str] = &[
     "expect-test",
     "fallible-iterator", // dependency of `thorin`
     "fastrand",
+    "find-msvc-tools",
     "flate2",
     "fluent-bundle",
     "fluent-langneg",
@@ -457,6 +458,7 @@ const PERMITTED_RUSTC_DEPENDENCIES: &[&str] = &[
     "scopeguard",
     "self_cell",
     "serde",
+    "serde_core",
     "serde_derive",
     "serde_derive_internals",
     "serde_json",
@@ -577,6 +579,7 @@ const PERMITTED_STDLIB_DEPENDENCIES: &[&str] = &[
     "rustc-literal-escaper",
     "shlex",
     "unwinding",
+    "vex-sdk",
     "wasi",
     "windows-sys",
     "windows-targets",

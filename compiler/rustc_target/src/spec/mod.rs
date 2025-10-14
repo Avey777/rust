@@ -834,6 +834,7 @@ crate::target_spec_enum! {
     pub enum PanicStrategy {
         Unwind = "unwind",
         Abort = "abort",
+        ImmediateAbort = "immediate-abort",
     }
 
     parse_error_type = "panic strategy";
@@ -852,7 +853,12 @@ impl PanicStrategy {
         match *self {
             PanicStrategy::Unwind => sym::unwind,
             PanicStrategy::Abort => sym::abort,
+            PanicStrategy::ImmediateAbort => sym::immediate_abort,
         }
+    }
+
+    pub fn unwinds(self) -> bool {
+        matches!(self, PanicStrategy::Unwind)
     }
 }
 
@@ -1618,6 +1624,7 @@ supported_targets! {
     ("wasm32v1-none", wasm32v1_none),
     ("wasm32-wasip1", wasm32_wasip1),
     ("wasm32-wasip2", wasm32_wasip2),
+    ("wasm32-wasip3", wasm32_wasip3),
     ("wasm32-wasip1-threads", wasm32_wasip1_threads),
     ("wasm32-wali-linux-musl", wasm32_wali_linux_musl),
     ("wasm64-unknown-unknown", wasm64_unknown_unknown),
@@ -1642,6 +1649,7 @@ supported_targets! {
     ("aarch64-unknown-hermit", aarch64_unknown_hermit),
     ("riscv64gc-unknown-hermit", riscv64gc_unknown_hermit),
     ("x86_64-unknown-hermit", x86_64_unknown_hermit),
+    ("x86_64-unknown-motor", x86_64_unknown_motor),
 
     ("x86_64-unikraft-linux-musl", x86_64_unikraft_linux_musl),
 
@@ -3175,6 +3183,7 @@ impl Target {
             "avr" => (Architecture::Avr, None),
             "msp430" => (Architecture::Msp430, None),
             "hexagon" => (Architecture::Hexagon, None),
+            "xtensa" => (Architecture::Xtensa, None),
             "bpf" => (Architecture::Bpf, None),
             "loongarch32" => (Architecture::LoongArch32, None),
             "loongarch64" => (Architecture::LoongArch64, None),
