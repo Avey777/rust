@@ -51,12 +51,12 @@ We then check whether we're able to *semantically* unify the generic arguments o
 with the arguments of any opaque type already in the opaque types storage. If so, we unify the
 previously stored type with the expected type of this `normalizes-to` call: [source][eq-prev][^1].
 
-If not, we insert the expected type in the opaque types storage: [source][insert-storage][^2]. 
+If not, we insert the expected type in the opaque types storage: [source][insert-storage][^2].
 Finally, we check whether the item bounds of the opaque hold for the expected type:
 [source][item-bounds-ck].
 
 [norm]: https://github.com/rust-lang/rust/blob/384d26fc7e3bdd7687cc17b2662b091f6017ec2a/compiler/rustc_trait_selection/src/solve/normalizes_to/opaque_types.rs#L13
-[coherence-example]: https://github.com/rust-lang/rust/blob/master/tests/ui/type-alias-impl-trait/coherence/coherence_different_hidden_ty.rs
+[coherence-example]: https://github.com/rust-lang/rust/blob/HEAD/tests/ui/type-alias-impl-trait/coherence/coherence_different_hidden_ty.rs
 [placeholder-ck]: https://github.com/rust-lang/rust/blob/384d26fc7e3bdd7687cc17b2662b091f6017ec2a/compiler/rustc_trait_selection/src/solve/normalizes_to/opaque_types.rs#L33
 [check-storage]: https://github.com/rust-lang/rust/blob/384d26fc7e3bdd7687cc17b2662b091f6017ec2a/compiler/rustc_trait_selection/src/solve/normalizes_to/opaque_types.rs#L51-L52
 [eq-prev]: https://github.com/rust-lang/rust/blob/384d26fc7e3bdd7687cc17b2662b091f6017ec2a/compiler/rustc_trait_selection/src/solve/normalizes_to/opaque_types.rs#L51-L59
@@ -98,7 +98,7 @@ end up leaking placeholders.
 The handling of member constraints does not change in the new solver. See the
 [relevant existing chapter][member-constraints] for that.
 
-[member-constraints]: ../borrow_check/region_inference/member_constraints.md
+[member-constraints]: ../borrow-check/region-inference/member-constraints.md
 
 ## calling methods on opaque types
 

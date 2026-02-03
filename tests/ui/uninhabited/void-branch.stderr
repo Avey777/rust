@@ -1,15 +1,13 @@
 error: unreachable expression
-  --> $DIR/void-branch.rs:8:9
+  --> $DIR/void-branch.rs:10:13
    |
-LL | /         unsafe {
-LL | |
-LL | |             std::mem::uninitialized::<Void>();
-   | |             --------------------------------- any code following this expression is unreachable
-LL | |         }
-   | |_________^ unreachable expression
+LL |             std::mem::uninitialized::<Void>();
+   |             --------------------------------- any code following this expression is unreachable
+LL |             println!();
+   |             ^^^^^^^^^^ unreachable expression
    |
 note: this expression has type `Void`, which is uninhabited
-  --> $DIR/void-branch.rs:10:13
+  --> $DIR/void-branch.rs:9:13
    |
 LL |             std::mem::uninitialized::<Void>();
    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -20,15 +18,12 @@ LL | #![deny(unreachable_code)]
    |         ^^^^^^^^^^^^^^^^
 
 error: unreachable expression
-  --> $DIR/void-branch.rs:22:14
+  --> $DIR/void-branch.rs:25:9
    |
-LL |       if false {
-   |  ______________^
-LL | |
-LL | |         infallible();
-   | |         ------------ any code following this expression is unreachable
-LL | |     }
-   | |_____^ unreachable expression
+LL |         infallible();
+   |         ------------ any code following this expression is unreachable
+LL |         println!()
+   |         ^^^^^^^^^^ unreachable expression
    |
 note: this expression has type `Infallible`, which is uninhabited
   --> $DIR/void-branch.rs:24:9

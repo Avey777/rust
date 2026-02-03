@@ -1,5 +1,6 @@
+use crate::clone::TrivialClone;
 use crate::cmp::Ordering;
-use crate::marker::{PointeeSized, Unsize};
+use crate::marker::{Destruct, PointeeSized, Unsize};
 use crate::mem::{MaybeUninit, SizedTypeProperties};
 use crate::num::NonZero;
 use crate::ops::{CoerceUnsized, DispatchFromDyn};
@@ -1118,7 +1119,11 @@ impl<T: PointeeSized> NonNull<T> {
     /// [`ptr::drop_in_place`]: crate::ptr::drop_in_place()
     #[inline(always)]
     #[stable(feature = "non_null_convenience", since = "1.80.0")]
-    pub unsafe fn drop_in_place(self) {
+    #[rustc_const_unstable(feature = "const_drop_in_place", issue = "109342")]
+    pub const unsafe fn drop_in_place(self)
+    where
+        T: [const] Destruct,
+    {
         // SAFETY: the caller must uphold the safety contract for `drop_in_place`.
         unsafe { ptr::drop_in_place(self.as_ptr()) }
     }
@@ -1371,6 +1376,35 @@ impl<T> NonNull<T> {
     #[unstable(feature = "cast_maybe_uninit", issue = "145036")]
     pub const fn cast_uninit(self) -> NonNull<MaybeUninit<T>> {
         self.cast()
+    }
+
+    /// Creates a non-null raw slice from a thin pointer and a length.
+    ///
+    /// The `len` argument is the number of **elements**, not the number of bytes.
+    ///
+    /// This function is safe, but dereferencing the return value is unsafe.
+    /// See the documentation of [`slice::from_raw_parts`] for slice safety requirements.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// #![feature(ptr_cast_slice)]
+    /// use std::ptr::NonNull;
+    ///
+    /// // create a slice pointer when starting out with a pointer to the first element
+    /// let mut x = [5, 6, 7];
+    /// let nonnull_pointer = NonNull::new(x.as_mut_ptr()).unwrap();
+    /// let slice = nonnull_pointer.cast_slice(3);
+    /// assert_eq!(unsafe { slice.as_ref()[2] }, 7);
+    /// ```
+    ///
+    /// (Note that this example artificially demonstrates a use of this method,
+    /// but `let slice = NonNull::from(&x[..]);` would be a better way to write code like this.)
+    #[inline]
+    #[must_use]
+    #[unstable(feature = "ptr_cast_slice", issue = "149103")]
+    pub const fn cast_slice(self, len: usize) -> NonNull<[T]> {
+        NonNull::slice_from_raw_parts(self, len)
     }
 }
 impl<T> NonNull<MaybeUninit<T>> {
@@ -1648,6 +1682,10 @@ impl<T: PointeeSized> Clone for NonNull<T> {
 
 #[stable(feature = "nonnull", since = "1.25.0")]
 impl<T: PointeeSized> Copy for NonNull<T> {}
+
+#[doc(hidden)]
+#[unstable(feature = "trivial_clone", issue = "none")]
+unsafe impl<T: PointeeSized> TrivialClone for NonNull<T> {}
 
 #[unstable(feature = "coerce_unsized", issue = "18598")]
 impl<T: PointeeSized, U: PointeeSized> CoerceUnsized<NonNull<U>> for NonNull<T> where T: Unsize<U> {}

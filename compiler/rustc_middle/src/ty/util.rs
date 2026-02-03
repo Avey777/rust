@@ -4,12 +4,14 @@ use std::{fmt, iter};
 
 use rustc_abi::{Float, Integer, IntegerType, Size};
 use rustc_apfloat::Float as _;
+use rustc_ast::attr::AttributeExt;
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_data_structures::stable_hasher::{HashStable, StableHasher};
 use rustc_data_structures::stack::ensure_sufficient_stack;
 use rustc_errors::ErrorGuaranteed;
 use rustc_hashes::Hash128;
 use rustc_hir as hir;
+use rustc_hir::attrs::AttributeKind;
 use rustc_hir::def::{CtorOf, DefKind, Res};
 use rustc_hir::def_id::{CrateNum, DefId, LocalDefId};
 use rustc_hir::limit::Limit;
@@ -607,9 +609,8 @@ impl<'tcx> TyCtxt<'tcx> {
     /// have the same `DefKind`.
     ///
     /// Note that closures have a `DefId`, but the closure *expression* also has a
-    // `HirId` that is located within the context where the closure appears (and, sadly,
-    // a corresponding `NodeId`, since those are not yet phased out). The parent of
-    // the closure's `DefId` will also be the context where it appears.
+    /// `HirId` that is located within the context where the closure appears. The
+    /// parent of the closure's `DefId` will also be the context where it appears.
     pub fn is_closure_like(self, def_id: DefId) -> bool {
         matches!(self.def_kind(def_id), DefKind::Closure)
     }
@@ -641,12 +642,8 @@ impl<'tcx> TyCtxt<'tcx> {
     /// has its own type-checking context or "inference environment".
     ///
     /// For example, a closure has its own `DefId`, but it is type-checked
-    /// with the containing item. Similarly, an inline const block has its
-    /// own `DefId` but it is type-checked together with the containing item.
-    ///
-    /// Therefore, when we fetch the
-    /// `typeck` the closure, for example, we really wind up
-    /// fetching the `typeck` the enclosing fn item.
+    /// with the containing item. Therefore, when we fetch the `typeck` of the closure,
+    /// for example, we really wind up fetching the `typeck` of the enclosing fn item.
     pub fn typeck_root_def_id(self, def_id: DefId) -> DefId {
         let mut def_id = def_id;
         while self.is_typeck_child(def_id) {
@@ -1392,8 +1389,10 @@ impl<'tcx> Ty<'tcx> {
 
                 // This doesn't depend on regions, so try to minimize distinct
                 // query keys used.
-                let erased = tcx.normalize_erasing_regions(typing_env, query_ty);
-                tcx.has_significant_drop_raw(typing_env.as_query_input(erased))
+                // FIX: Use try_normalize to avoid crashing. If it fails, return true.
+                tcx.try_normalize_erasing_regions(typing_env, query_ty)
+                    .map(|erased| tcx.has_significant_drop_raw(typing_env.as_query_input(erased)))
+                    .unwrap_or(true)
             }
         }
     }
@@ -1664,16 +1663,14 @@ pub fn reveal_opaque_types_in_bounds<'tcx>(
 
 /// Determines whether an item is directly annotated with `doc(hidden)`.
 fn is_doc_hidden(tcx: TyCtxt<'_>, def_id: LocalDefId) -> bool {
-    tcx.get_attrs(def_id, sym::doc)
-        .filter_map(|attr| attr.meta_item_list())
-        .any(|items| items.iter().any(|item| item.has_name(sym::hidden)))
+    let attrs = tcx.hir_attrs(tcx.local_def_id_to_hir_id(def_id));
+    attrs.iter().any(|attr| attr.is_doc_hidden())
 }
 
 /// Determines whether an item is annotated with `doc(notable_trait)`.
 pub fn is_doc_notable_trait(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
-    tcx.get_attrs(def_id, sym::doc)
-        .filter_map(|attr| attr.meta_item_list())
-        .any(|items| items.iter().any(|item| item.has_name(sym::notable_trait)))
+    let attrs = tcx.get_all_attrs(def_id);
+    attrs.iter().any(|attr| matches!(attr, hir::Attribute::Parsed(AttributeKind::Doc(doc)) if doc.notable_trait.is_some()))
 }
 
 /// Determines whether an item is an intrinsic (which may be via Abi or via the `rustc_intrinsic` attribute).

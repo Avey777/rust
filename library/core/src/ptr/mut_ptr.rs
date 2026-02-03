@@ -1,7 +1,7 @@
 use super::*;
 use crate::cmp::Ordering::{Equal, Greater, Less};
 use crate::intrinsics::const_eval_select;
-use crate::marker::PointeeSized;
+use crate::marker::{Destruct, PointeeSized};
 use crate::mem::{self, SizedTypeProperties};
 use crate::slice::{self, SliceIndex};
 
@@ -1390,8 +1390,12 @@ impl<T: PointeeSized> *mut T {
     ///
     /// [`ptr::drop_in_place`]: crate::ptr::drop_in_place()
     #[stable(feature = "pointer_methods", since = "1.26.0")]
+    #[rustc_const_unstable(feature = "const_drop_in_place", issue = "109342")]
     #[inline(always)]
-    pub unsafe fn drop_in_place(self) {
+    pub const unsafe fn drop_in_place(self)
+    where
+        T: [const] Destruct,
+    {
         // SAFETY: the caller must uphold the safety contract for `drop_in_place`.
         unsafe { drop_in_place(self) }
     }
@@ -1651,6 +1655,51 @@ impl<T> *mut T {
     pub const fn cast_uninit(self) -> *mut MaybeUninit<T> {
         self as _
     }
+
+    /// Forms a raw mutable slice from a pointer and a length.
+    ///
+    /// The `len` argument is the number of **elements**, not the number of bytes.
+    ///
+    /// Performs the same functionality as [`cast_slice`] on a `*const T`, except that a
+    /// raw mutable slice is returned, as opposed to a raw immutable slice.
+    ///
+    /// This function is safe, but actually using the return value is unsafe.
+    /// See the documentation of [`slice::from_raw_parts_mut`] for slice safety requirements.
+    ///
+    /// [`slice::from_raw_parts_mut`]: crate::slice::from_raw_parts_mut
+    /// [`cast_slice`]: pointer::cast_slice
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// #![feature(ptr_cast_slice)]
+    ///
+    /// let x = &mut [5, 6, 7];
+    /// let slice = x.as_mut_ptr().cast_slice(3);
+    ///
+    /// unsafe {
+    ///     (*slice)[2] = 99; // assign a value at an index in the slice
+    /// };
+    ///
+    /// assert_eq!(unsafe { &*slice }[2], 99);
+    /// ```
+    ///
+    /// You must ensure that the pointer is valid and not null before dereferencing
+    /// the raw slice. A slice reference must never have a null pointer, even if it's empty.
+    ///
+    /// ```rust,should_panic
+    /// #![feature(ptr_cast_slice)]
+    /// use std::ptr;
+    /// let danger: *mut [u8] = ptr::null_mut::<u8>().cast_slice(0);
+    /// unsafe {
+    ///     danger.as_mut().expect("references must not be null");
+    /// }
+    /// ```
+    #[inline]
+    #[unstable(feature = "ptr_cast_slice", issue = "149103")]
+    pub const fn cast_slice(self, len: usize) -> *mut [T] {
+        slice_from_raw_parts_mut(self, len)
+    }
 }
 impl<T> *mut MaybeUninit<T> {
     /// Casts from a maybe-uninitialized type to its initialized version.
@@ -1708,7 +1757,8 @@ impl<T> *mut [T] {
     /// Gets a raw, mutable pointer to the underlying array.
     ///
     /// If `N` is not exactly equal to the length of `self`, then this method returns `None`.
-    #[unstable(feature = "slice_as_array", issue = "133508")]
+    #[stable(feature = "core_slice_as_array", since = "1.93.0")]
+    #[rustc_const_stable(feature = "core_slice_as_array", since = "1.93.0")]
     #[inline]
     #[must_use]
     pub const fn as_mut_array<const N: usize>(self) -> Option<*mut [T; N]> {
@@ -1737,7 +1787,7 @@ impl<T> *mut [T] {
     /// that is at least `mid * size_of::<T>()` bytes long. Not upholding these
     /// requirements is *[undefined behavior]* even if the resulting pointers are not used.
     ///
-    /// Since `len` being in-bounds it is not a safety invariant of `*mut [T]` the
+    /// Since `len` being in-bounds is not a safety invariant of `*mut [T]` the
     /// safety requirements of this method are the same as for [`split_at_mut_unchecked`].
     /// The explicit bounds check is only as useful as `len` is correct.
     ///
@@ -1995,6 +2045,10 @@ impl<T, const N: usize> *mut [T; N] {
 
 /// Pointer equality is by address, as produced by the [`<*mut T>::addr`](pointer::addr) method.
 #[stable(feature = "rust1", since = "1.0.0")]
+#[diagnostic::on_const(
+    message = "pointers cannot be reliably compared during const eval",
+    note = "see issue #53020 <https://github.com/rust-lang/rust/issues/53020> for more information"
+)]
 impl<T: PointeeSized> PartialEq for *mut T {
     #[inline(always)]
     #[allow(ambiguous_wide_pointer_comparisons)]
@@ -2005,10 +2059,18 @@ impl<T: PointeeSized> PartialEq for *mut T {
 
 /// Pointer equality is an equivalence relation.
 #[stable(feature = "rust1", since = "1.0.0")]
+#[diagnostic::on_const(
+    message = "pointers cannot be reliably compared during const eval",
+    note = "see issue #53020 <https://github.com/rust-lang/rust/issues/53020> for more information"
+)]
 impl<T: PointeeSized> Eq for *mut T {}
 
 /// Pointer comparison is by address, as produced by the [`<*mut T>::addr`](pointer::addr) method.
 #[stable(feature = "rust1", since = "1.0.0")]
+#[diagnostic::on_const(
+    message = "pointers cannot be reliably compared during const eval",
+    note = "see issue #53020 <https://github.com/rust-lang/rust/issues/53020> for more information"
+)]
 impl<T: PointeeSized> Ord for *mut T {
     #[inline]
     #[allow(ambiguous_wide_pointer_comparisons)]
@@ -2025,6 +2087,10 @@ impl<T: PointeeSized> Ord for *mut T {
 
 /// Pointer comparison is by address, as produced by the [`<*mut T>::addr`](pointer::addr) method.
 #[stable(feature = "rust1", since = "1.0.0")]
+#[diagnostic::on_const(
+    message = "pointers cannot be reliably compared during const eval",
+    note = "see issue #53020 <https://github.com/rust-lang/rust/issues/53020> for more information"
+)]
 impl<T: PointeeSized> PartialOrd for *mut T {
     #[inline(always)]
     #[allow(ambiguous_wide_pointer_comparisons)]

@@ -788,11 +788,10 @@ pub fn compile_declarative_macro(
         let lhs_span = lhs_tt.span();
         // Convert the lhs into `MatcherLoc` form, which is better for doing the
         // actual matching.
-        let lhs = if let mbe::TokenTree::Delimited(.., delimited) = lhs_tt {
-            mbe::macro_parser::compute_locs(&delimited.tts)
-        } else {
+        let mbe::TokenTree::Delimited(.., delimited) = lhs_tt else {
             return dummy_syn_ext(guar.unwrap());
         };
+        let lhs = mbe::macro_parser::compute_locs(&delimited.tts);
         if let Some(args) = args {
             let args_span = args.span();
             let mbe::TokenTree::Delimited(.., delimited) = args else {
@@ -820,7 +819,7 @@ pub fn compile_declarative_macro(
     }
     assert!(!kinds.is_empty());
 
-    let transparency = find_attr!(attrs, AttributeKind::MacroTransparency(x) => *x)
+    let transparency = find_attr!(attrs, AttributeKind::RustcMacroTransparency(x) => *x)
         .unwrap_or(Transparency::fallback(macro_rules));
 
     if let Some(guar) = guar {

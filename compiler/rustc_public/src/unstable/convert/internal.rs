@@ -40,7 +40,7 @@ impl RustcInternal for CrateNum {
         _tables: &mut Tables<'_, BridgeTys>,
         _tcx: impl InternalCx<'tcx>,
     ) -> Self::T<'tcx> {
-        rustc_span::def_id::CrateNum::from_usize(*self)
+        rustc_span::def_id::CrateNum::from_usize(self.0)
     }
 }
 
@@ -433,7 +433,7 @@ where
 }
 
 impl RustcInternal for BoundVariableKind {
-    type T<'tcx> = rustc_ty::BoundVariableKind;
+    type T<'tcx> = rustc_ty::BoundVariableKind<'tcx>;
 
     fn internal<'tcx>(
         &self,
@@ -615,6 +615,7 @@ impl RustcInternal for Abi {
             Abi::RustInvalid => rustc_abi::ExternAbi::RustInvalid,
             Abi::RiscvInterruptM => rustc_abi::ExternAbi::RiscvInterruptM,
             Abi::RiscvInterruptS => rustc_abi::ExternAbi::RiscvInterruptS,
+            Abi::RustPreserveNone => rustc_abi::ExternAbi::RustPreserveNone,
             Abi::Custom => rustc_abi::ExternAbi::Custom,
         }
     }

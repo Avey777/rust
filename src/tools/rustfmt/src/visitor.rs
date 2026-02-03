@@ -7,7 +7,9 @@ use rustc_span::{BytePos, Ident, Pos, Span, symbol};
 use tracing::debug;
 
 use crate::attr::*;
-use crate::comment::{CodeCharKind, CommentCodeSlices, contains_comment, rewrite_comment};
+use crate::comment::{
+    CodeCharKind, CommentCodeSlices, contains_comment, recover_comment_removed, rewrite_comment,
+};
 use crate::config::{BraceStyle, Config, MacroSelector, StyleEdition};
 use crate::coverage::transform_missing_snippet;
 use crate::items::{
@@ -497,16 +499,9 @@ impl<'b, 'a: 'b> FmtVisitor<'a> {
                     let rw = self.with_context(|ctx| format_trait(ctx, item, block_indent));
                     self.push_rewrite(item.span, rw);
                 }
-                ast::ItemKind::TraitAlias(ident, ref generics, ref generic_bounds) => {
+                ast::ItemKind::TraitAlias(ref ta) => {
                     let shape = Shape::indented(self.block_indent, self.config);
-                    let rw = format_trait_alias(
-                        &self.get_context(),
-                        ident,
-                        &item.vis,
-                        generics,
-                        generic_bounds,
-                        shape,
-                    );
+                    let rw = format_trait_alias(&self.get_context(), ta, &item.vis, shape);
                     self.push_rewrite(item.span, rw);
                 }
                 ast::ItemKind::ExternCrate(..) => {
@@ -539,6 +534,28 @@ impl<'b, 'a: 'b> FmtVisitor<'a> {
                 }
                 ast::ItemKind::Static(..) | ast::ItemKind::Const(..) => {
                     self.visit_static(&StaticParts::from_item(item));
+                }
+                ast::ItemKind::ConstBlock(ast::ConstBlockItem {
+                    id: _,
+                    span,
+                    ref block,
+                }) => {
+                    let context = &self.get_context();
+                    let offset = self.block_indent;
+                    self.push_rewrite(
+                        item.span,
+                        block
+                            .rewrite(
+                                context,
+                                Shape::legacy(
+                                    context.budget(offset.block_indent),
+                                    offset.block_only(),
+                                ),
+                            )
+                            .map(|rhs| {
+                                recover_comment_removed(format!("const {rhs}"), span, context)
+                            }),
+                    );
                 }
                 ast::ItemKind::Fn(ref fn_kind) => {
                     let ast::Fn {

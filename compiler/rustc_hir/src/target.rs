@@ -171,6 +171,7 @@ impl Target {
             ast::ItemKind::Use(..) => Target::Use,
             ast::ItemKind::Static { .. } => Target::Static,
             ast::ItemKind::Const(..) => Target::Const,
+            ast::ItemKind::ConstBlock(..) => Target::Const,
             ast::ItemKind::Fn { .. } => Target::Fn,
             ast::ItemKind::Mod(..) => Target::Mod,
             ast::ItemKind::ForeignMod { .. } => Target::ForeignMod,
@@ -240,7 +241,7 @@ impl Target {
             AssocItemKind::Const(_) => Target::AssocConst,
             AssocItemKind::Fn(f) => Target::Method(match assoc_ctxt {
                 AssocCtxt::Trait => MethodKind::Trait { body: f.body.is_some() },
-                AssocCtxt::Impl { of_trait } => {
+                AssocCtxt::Impl { of_trait, .. } => {
                     if of_trait {
                         MethodKind::TraitImpl
                     } else {

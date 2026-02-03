@@ -10,17 +10,16 @@ use std::{
 };
 
 use intern::Symbol;
-use proc_macro::bridge::{self, server};
-use span::{FIXUP_ERASED_FILE_AST_ID_MARKER, Span};
-use tt::{TextRange, TextSize};
+use rustc_proc_macro::bridge::server;
+use span::{FIXUP_ERASED_FILE_AST_ID_MARKER, Span, TextRange, TextSize};
 
-use crate::server_impl::{from_token_tree, literal_from_str, token_stream::TokenStreamBuilder};
+use crate::{
+    ProcMacroClientHandle,
+    bridge::{Diagnostic, ExpnGlobals, Literal, TokenTree},
+    server_impl::literal_from_str,
+};
 
-type TokenStream = crate::server_impl::TokenStream<Span>;
-
-pub struct FreeFunctions;
-
-pub struct RaSpanServer {
+pub struct RaSpanServer<'a> {
     // FIXME: Report this back to the caller to track as dependencies
     pub tracked_env_vars: HashMap<Box<str>, Option<Box<str>>>,
     // FIXME: Report this back to the caller to track as dependencies
@@ -28,16 +27,30 @@ pub struct RaSpanServer {
     pub call_site: Span,
     pub def_site: Span,
     pub mixed_site: Span,
+    pub callback: Option<ProcMacroClientHandle<'a>>,
 }
 
-impl server::Types for RaSpanServer {
-    type FreeFunctions = FreeFunctions;
-    type TokenStream = TokenStream;
+impl server::Server for RaSpanServer<'_> {
+    type TokenStream = crate::token_stream::TokenStream<Span>;
     type Span = Span;
     type Symbol = Symbol;
-}
 
-impl server::FreeFunctions for RaSpanServer {
+    fn globals(&mut self) -> ExpnGlobals<Self::Span> {
+        ExpnGlobals {
+            def_site: self.def_site,
+            call_site: self.call_site,
+            mixed_site: self.mixed_site,
+        }
+    }
+
+    fn intern_symbol(ident: &str) -> Self::Symbol {
+        Symbol::intern(ident)
+    }
+
+    fn with_symbol_string(symbol: &Self::Symbol, f: impl FnOnce(&str)) {
+        f(symbol.as_str())
+    }
+
     fn injected_env_var(&mut self, _: &str) -> Option<std::string::String> {
         None
     }
@@ -49,23 +62,26 @@ impl server::FreeFunctions for RaSpanServer {
         self.tracked_paths.insert(path.into());
     }
 
-    fn literal_from_str(
-        &mut self,
-        s: &str,
-    ) -> Result<bridge::Literal<Self::Span, Self::Symbol>, ()> {
+    fn literal_from_str(&mut self, s: &str) -> Result<Literal<Self::Span>, ()> {
         literal_from_str(s, self.call_site)
     }
 
-    fn emit_diagnostic(&mut self, _: bridge::Diagnostic<Self::Span>) {
+    fn emit_diagnostic(&mut self, _: Diagnostic<Self::Span>) {
         // FIXME handle diagnostic
     }
-}
 
-impl server::TokenStream for RaSpanServer {
-    fn is_empty(&mut self, stream: &Self::TokenStream) -> bool {
+    fn ts_drop(&mut self, stream: Self::TokenStream) {
+        drop(stream);
+    }
+
+    fn ts_clone(&mut self, stream: &Self::TokenStream) -> Self::TokenStream {
+        stream.clone()
+    }
+
+    fn ts_is_empty(&mut self, stream: &Self::TokenStream) -> bool {
         stream.is_empty()
     }
-    fn from_str(&mut self, src: &str) -> Self::TokenStream {
+    fn ts_from_str(&mut self, src: &str) -> Self::TokenStream {
         Self::TokenStream::from_str(src, self.call_site).unwrap_or_else(|e| {
             Self::TokenStream::from_str(
                 &format!("compile_error!(\"failed to parse str to token stream: {e}\")"),
@@ -74,17 +90,15 @@ impl server::TokenStream for RaSpanServer {
             .unwrap()
         })
     }
-    fn to_string(&mut self, stream: &Self::TokenStream) -> String {
+    fn ts_to_string(&mut self, stream: &Self::TokenStream) -> String {
         stream.to_string()
     }
-    fn from_token_tree(
-        &mut self,
-        tree: bridge::TokenTree<Self::TokenStream, Self::Span, Self::Symbol>,
-    ) -> Self::TokenStream {
-        from_token_tree(tree)
+
+    fn ts_from_token_tree(&mut self, tree: TokenTree<Self::Span>) -> Self::TokenStream {
+        Self::TokenStream::new(vec![tree])
     }
 
-    fn expand_expr(&mut self, self_: &Self::TokenStream) -> Result<Self::TokenStream, ()> {
+    fn ts_expand_expr(&mut self, self_: &Self::TokenStream) -> Result<Self::TokenStream, ()> {
         // FIXME: requires db, more importantly this requires name resolution so we would need to
         // eagerly expand this proc-macro, but we can't know that this proc-macro is eager until we
         // expand it ...
@@ -93,65 +107,54 @@ impl server::TokenStream for RaSpanServer {
         Ok(self_.clone())
     }
 
-    fn concat_trees(
+    fn ts_concat_trees(
         &mut self,
         base: Option<Self::TokenStream>,
-        trees: Vec<bridge::TokenTree<Self::TokenStream, Self::Span, Self::Symbol>>,
+        trees: Vec<TokenTree<Self::Span>>,
     ) -> Self::TokenStream {
-        let mut builder = TokenStreamBuilder::default();
-        if let Some(base) = base {
-            builder.push(base);
+        match base {
+            Some(mut base) => {
+                for tt in trees {
+                    base.push_tree(tt);
+                }
+                base
+            }
+            None => Self::TokenStream::new(trees),
         }
-        for tree in trees {
-            builder.push(self.from_token_tree(tree));
-        }
-        builder.build()
     }
 
-    fn concat_streams(
+    fn ts_concat_streams(
         &mut self,
         base: Option<Self::TokenStream>,
         streams: Vec<Self::TokenStream>,
     ) -> Self::TokenStream {
-        let mut builder = TokenStreamBuilder::default();
-        if let Some(base) = base {
-            builder.push(base);
+        let mut stream = base.unwrap_or_default();
+        for s in streams {
+            stream.push_stream(s);
         }
-        for stream in streams {
-            builder.push(stream);
-        }
-        builder.build()
+        stream
     }
 
-    fn into_trees(
-        &mut self,
-        stream: Self::TokenStream,
-    ) -> Vec<bridge::TokenTree<Self::TokenStream, Self::Span, Self::Symbol>> {
-        stream.into_bridge(&mut |first, second| {
-            server::Span::join(self, first, second).unwrap_or(first)
-        })
+    fn ts_into_trees(&mut self, stream: Self::TokenStream) -> Vec<TokenTree<Self::Span>> {
+        (*stream.0).clone()
     }
-}
 
-impl server::Span for RaSpanServer {
-    fn debug(&mut self, span: Self::Span) -> String {
+    fn span_debug(&mut self, span: Self::Span) -> String {
         format!("{:?}", span)
     }
-    fn file(&mut self, _: Self::Span) -> String {
-        // FIXME
-        String::new()
+    fn span_file(&mut self, span: Self::Span) -> String {
+        self.callback.as_mut().map(|cb| cb.file(span.anchor.file_id.file_id())).unwrap_or_default()
     }
-    fn local_file(&mut self, _: Self::Span) -> Option<String> {
-        // FIXME
-        None
+    fn span_local_file(&mut self, span: Self::Span) -> Option<String> {
+        self.callback.as_mut().and_then(|cb| cb.local_file(span.anchor.file_id.file_id()))
     }
-    fn save_span(&mut self, _span: Self::Span) -> usize {
+    fn span_save_span(&mut self, _span: Self::Span) -> usize {
         // FIXME, quote is incompatible with third-party tools
         // This is called by the quote proc-macro which is expanded when the proc-macro is compiled
         // As such, r-a will never observe this
         0
     }
-    fn recover_proc_macro_span(&mut self, _id: usize) -> Self::Span {
+    fn span_recover_proc_macro_span(&mut self, _id: usize) -> Self::Span {
         // FIXME, quote is incompatible with third-party tools
         // This is called by the expansion of quote!, r-a will observe this, but we don't have
         // access to the spans that were encoded
@@ -161,24 +164,23 @@ impl server::Span for RaSpanServer {
     ///
     /// See PR:
     /// https://github.com/rust-lang/rust/pull/55780
-    fn source_text(&mut self, _span: Self::Span) -> Option<String> {
-        // FIXME requires db, needs special handling wrt fixup spans
-        None
+    fn span_source_text(&mut self, span: Self::Span) -> Option<String> {
+        self.callback.as_mut()?.source_text(span)
     }
 
-    fn parent(&mut self, _span: Self::Span) -> Option<Self::Span> {
+    fn span_parent(&mut self, _span: Self::Span) -> Option<Self::Span> {
         // FIXME requires db, looks up the parent call site
         None
     }
-    fn source(&mut self, span: Self::Span) -> Self::Span {
+    fn span_source(&mut self, span: Self::Span) -> Self::Span {
         // FIXME requires db, returns the top level call site
         span
     }
-    fn byte_range(&mut self, span: Self::Span) -> Range<usize> {
+    fn span_byte_range(&mut self, span: Self::Span) -> Range<usize> {
         // FIXME requires db to resolve the ast id, THIS IS NOT INCREMENTAL
         Range { start: span.range.start().into(), end: span.range.end().into() }
     }
-    fn join(&mut self, first: Self::Span, second: Self::Span) -> Option<Self::Span> {
+    fn span_join(&mut self, first: Self::Span, second: Self::Span) -> Option<Self::Span> {
         // We can't modify the span range for fixup spans, those are meaningful to fixup, so just
         // prefer the non-fixup span.
         if first.anchor.ast_id == FIXUP_ERASED_FILE_AST_ID_MARKER {
@@ -206,7 +208,7 @@ impl server::Span for RaSpanServer {
             ctx: second.ctx,
         })
     }
-    fn subspan(
+    fn span_subspan(
         &mut self,
         span: Self::Span,
         start: Bound<usize>,
@@ -250,11 +252,11 @@ impl server::Span for RaSpanServer {
         })
     }
 
-    fn resolved_at(&mut self, span: Self::Span, at: Self::Span) -> Self::Span {
+    fn span_resolved_at(&mut self, span: Self::Span, at: Self::Span) -> Self::Span {
         Span { ctx: at.ctx, ..span }
     }
 
-    fn end(&mut self, span: Self::Span) -> Self::Span {
+    fn span_end(&mut self, span: Self::Span) -> Self::Span {
         // We can't modify the span range for fixup spans, those are meaningful to fixup.
         if span.anchor.ast_id == FIXUP_ERASED_FILE_AST_ID_MARKER {
             return span;
@@ -262,7 +264,7 @@ impl server::Span for RaSpanServer {
         Span { range: TextRange::empty(span.range.end()), ..span }
     }
 
-    fn start(&mut self, span: Self::Span) -> Self::Span {
+    fn span_start(&mut self, span: Self::Span) -> Self::Span {
         // We can't modify the span range for fixup spans, those are meaningful to fixup.
         if span.anchor.ast_id == FIXUP_ERASED_FILE_AST_ID_MARKER {
             return span;
@@ -270,132 +272,18 @@ impl server::Span for RaSpanServer {
         Span { range: TextRange::empty(span.range.start()), ..span }
     }
 
-    fn line(&mut self, _span: Self::Span) -> usize {
+    fn span_line(&mut self, _span: Self::Span) -> usize {
         // FIXME requires db to resolve line index, THIS IS NOT INCREMENTAL
         1
     }
 
-    fn column(&mut self, _span: Self::Span) -> usize {
+    fn span_column(&mut self, _span: Self::Span) -> usize {
         // FIXME requires db to resolve line index, THIS IS NOT INCREMENTAL
         1
     }
-}
 
-impl server::Symbol for RaSpanServer {
-    fn normalize_and_validate_ident(&mut self, string: &str) -> Result<Self::Symbol, ()> {
+    fn symbol_normalize_and_validate_ident(&mut self, string: &str) -> Result<Self::Symbol, ()> {
         // FIXME: nfc-normalize and validate idents
         Ok(<Self as server::Server>::intern_symbol(string))
-    }
-}
-
-impl server::Server for RaSpanServer {
-    fn globals(&mut self) -> bridge::ExpnGlobals<Self::Span> {
-        bridge::ExpnGlobals {
-            def_site: self.def_site,
-            call_site: self.call_site,
-            mixed_site: self.mixed_site,
-        }
-    }
-
-    fn intern_symbol(ident: &str) -> Self::Symbol {
-        Symbol::intern(ident)
-    }
-
-    fn with_symbol_string(symbol: &Self::Symbol, f: impl FnOnce(&str)) {
-        f(symbol.as_str())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use span::{EditionedFileId, FileId, SyntaxContext};
-
-    use super::*;
-
-    #[test]
-    fn test_ra_server_to_string() {
-        let span = Span {
-            range: TextRange::empty(TextSize::new(0)),
-            anchor: span::SpanAnchor {
-                file_id: EditionedFileId::current_edition(FileId::from_raw(0)),
-                ast_id: span::ROOT_ERASED_FILE_AST_ID,
-            },
-            ctx: SyntaxContext::root(span::Edition::CURRENT),
-        };
-        let s = TokenStream {
-            token_trees: vec![
-                tt::TokenTree::Leaf(tt::Leaf::Ident(tt::Ident {
-                    sym: Symbol::intern("struct"),
-                    span,
-                    is_raw: tt::IdentIsRaw::No,
-                })),
-                tt::TokenTree::Leaf(tt::Leaf::Ident(tt::Ident {
-                    sym: Symbol::intern("T"),
-                    span,
-                    is_raw: tt::IdentIsRaw::No,
-                })),
-                tt::TokenTree::Subtree(tt::Subtree {
-                    delimiter: tt::Delimiter {
-                        open: span,
-                        close: span,
-                        kind: tt::DelimiterKind::Brace,
-                    },
-                    len: 1,
-                }),
-                tt::TokenTree::Leaf(tt::Leaf::Literal(tt::Literal {
-                    kind: tt::LitKind::Str,
-                    symbol: Symbol::intern("string"),
-                    suffix: None,
-                    span,
-                })),
-            ],
-        };
-
-        assert_eq!(s.to_string(), "struct T {\"string\"}");
-    }
-
-    #[test]
-    fn test_ra_server_from_str() {
-        let span = Span {
-            range: TextRange::empty(TextSize::new(0)),
-            anchor: span::SpanAnchor {
-                file_id: EditionedFileId::current_edition(FileId::from_raw(0)),
-                ast_id: span::ROOT_ERASED_FILE_AST_ID,
-            },
-            ctx: SyntaxContext::root(span::Edition::CURRENT),
-        };
-        let subtree_paren_a = vec![
-            tt::TokenTree::Subtree(tt::Subtree {
-                delimiter: tt::Delimiter {
-                    open: span,
-                    close: span,
-                    kind: tt::DelimiterKind::Parenthesis,
-                },
-                len: 1,
-            }),
-            tt::TokenTree::Leaf(tt::Leaf::Ident(tt::Ident {
-                is_raw: tt::IdentIsRaw::No,
-                sym: Symbol::intern("a"),
-                span,
-            })),
-        ];
-
-        let t1 = TokenStream::from_str("(a)", span).unwrap();
-        assert_eq!(t1.token_trees.len(), 2);
-        assert!(t1.token_trees == subtree_paren_a);
-
-        let t2 = TokenStream::from_str("(a);", span).unwrap();
-        assert_eq!(t2.token_trees.len(), 3);
-        assert!(t2.token_trees[0..2] == subtree_paren_a);
-
-        let underscore = TokenStream::from_str("_", span).unwrap();
-        assert!(
-            underscore.token_trees[0]
-                == tt::TokenTree::Leaf(tt::Leaf::Ident(tt::Ident {
-                    sym: Symbol::intern("_"),
-                    span,
-                    is_raw: tt::IdentIsRaw::No,
-                }))
-        );
     }
 }

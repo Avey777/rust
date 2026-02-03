@@ -671,6 +671,11 @@ error[E0015]: cannot call non-const function `map::<u8>` in constants
 LL | const _: Option<_> = map(value);
    |                      ^^^^^^^^^^
    |
+note: function `map` is not const
+  --> $DIR/typeck_type_placeholder_item.rs:222:1
+   |
+LL | fn map<T>(_: fn() -> Option<&'static T>) -> Option<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    = note: calls in constants are limited to constant functions, tuple structs and tuple variants
 
 error[E0015]: cannot call non-const method `<std::ops::Range<i32> as Iterator>::filter::<{closure@$DIR/typeck_type_placeholder_item.rs:240:29: 240:32}>` in constants

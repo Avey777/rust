@@ -22,6 +22,7 @@ mod internal_cx;
 ///
 /// This trait is only for [`RustcInternal`]. Any other other access to rustc's internals
 /// should go through [`rustc_public_bridge::context::CompilerCtxt`].
+#[cfg_attr(not(feature = "rustc_internal"), allow(unreachable_pub))]
 pub trait InternalCx<'tcx>: Copy + Clone {
     fn tcx(self) -> TyCtxt<'tcx>;
 
@@ -46,7 +47,10 @@ pub trait InternalCx<'tcx>: Copy + Clone {
     fn mk_bound_variable_kinds_from_iter<I, T>(self, iter: I) -> T::Output
     where
         I: Iterator<Item = T>,
-        T: ty::CollectAndApply<ty::BoundVariableKind, &'tcx List<ty::BoundVariableKind>>;
+        T: ty::CollectAndApply<
+                ty::BoundVariableKind<'tcx>,
+                &'tcx List<ty::BoundVariableKind<'tcx>>,
+            >;
 
     fn mk_place_elems(self, v: &[mir::PlaceElem<'tcx>]) -> &'tcx List<mir::PlaceElem<'tcx>>;
 
@@ -59,6 +63,7 @@ pub trait InternalCx<'tcx>: Copy + Clone {
 /// between internal MIR and rustc_public's IR constructs.
 /// However, they should be used seldom and they have no influence in this crate semver.
 #[doc(hidden)]
+#[cfg_attr(not(feature = "rustc_internal"), allow(unreachable_pub))]
 pub trait Stable<'tcx>: PointeeSized {
     /// The stable representation of the type implementing Stable.
     type T;
@@ -78,6 +83,7 @@ pub trait Stable<'tcx>: PointeeSized {
 /// between internal MIR and rustc_public's IR constructs.
 /// They should be used seldom as they have no stability guarantees.
 #[doc(hidden)]
+#[cfg_attr(not(feature = "rustc_internal"), allow(unreachable_pub))]
 pub trait RustcInternal {
     type T<'tcx>;
     fn internal<'tcx>(

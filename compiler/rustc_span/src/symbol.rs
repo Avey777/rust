@@ -3,7 +3,6 @@
 //! type, and vice versa.
 
 use std::hash::{Hash, Hasher};
-use std::ops::Deref;
 use std::{fmt, str};
 
 use rustc_arena::DroplessArena;
@@ -14,6 +13,7 @@ use rustc_data_structures::stable_hasher::{
 use rustc_data_structures::sync::Lock;
 use rustc_macros::{Decodable, Encodable, HashStable_Generic, symbols};
 
+use crate::edit_distance::find_best_match_for_name;
 use crate::{DUMMY_SP, Edition, Span, with_session_globals};
 
 #[cfg(test)]
@@ -161,6 +161,7 @@ symbols! {
         Arc,
         ArcWeak,
         Argument,
+        Array,
         ArrayIntoIter,
         AsMut,
         AsRef,
@@ -184,13 +185,16 @@ symbols! {
         AtomicU64,
         AtomicU128,
         AtomicUsize,
+        AutoTrait,
         BTreeEntry,
         BTreeMap,
         BTreeSet,
         BinaryHeap,
+        Bool,
         Borrow,
         BorrowMut,
         Break,
+        BuildHasher,
         C,
         CStr,
         C_dash_unwind: "C-unwind",
@@ -199,6 +203,7 @@ symbols! {
         Capture,
         Cell,
         Center,
+        Char,
         Child,
         Cleanup,
         Clone,
@@ -226,6 +231,7 @@ symbols! {
         Display,
         DoubleEndedIterator,
         Duration,
+        DynTrait,
         Encodable,
         Encoder,
         Enumerate,
@@ -235,6 +241,7 @@ symbols! {
         Error,
         File,
         FileType,
+        Float,
         FmtArgumentsNew,
         FmtWrite,
         Fn,
@@ -260,9 +267,11 @@ symbols! {
         IndexOutput,
         Input,
         Instant,
+        Int,
         Into,
         IntoFuture,
         IntoIterator,
+        IntoIteratorItem,
         IoBufRead,
         IoLines,
         IoRead,
@@ -300,6 +309,7 @@ symbols! {
         Ordering,
         OsStr,
         OsString,
+        Other,
         Output,
         Param,
         ParamSet,
@@ -335,6 +345,7 @@ symbols! {
         RefCell,
         RefCellRef,
         RefCellRefMut,
+        Reference,
         Relaxed,
         Release,
         Result,
@@ -353,11 +364,13 @@ symbols! {
         Send,
         SeqCst,
         Sized,
+        Slice,
         SliceIndex,
         SliceIter,
         Some,
         SpanCtxt,
         Stdin,
+        Str,
         String,
         StructuralPartialEq,
         SubdiagMessage,
@@ -372,11 +385,13 @@ symbols! {
         ToString,
         TokenStream,
         Trait,
+        TrivialClone,
         Try,
         TryCaptureGeneric,
         TryCapturePrintable,
         TryFrom,
         TryInto,
+        Tuple,
         Ty,
         TyCtxt,
         TyKind,
@@ -400,6 +415,7 @@ symbols! {
         _t,
         _task_context,
         a32,
+        aarch64,
         aarch64_target_feature,
         aarch64_unstable_target_feature,
         aarch64_ver_target_feature,
@@ -449,6 +465,8 @@ symbols! {
         altivec,
         alu32,
         always,
+        amdgpu,
+        amdgpu_dispatch_ptr,
         analysis,
         and,
         and_then,
@@ -466,6 +484,9 @@ symbols! {
         args,
         arith_offset,
         arm,
+        arm64ec,
+        arm_a32: "arm::a32",
+        arm_t32: "arm::t32",
         arm_target_feature,
         array,
         as_dash_needed: "as-needed",
@@ -517,6 +538,7 @@ symbols! {
         async_fn_track_caller,
         async_fn_traits,
         async_for_loop,
+        async_gen_internals,
         async_iterator,
         async_iterator_poll_next,
         async_trait_bounds,
@@ -554,6 +576,7 @@ symbols! {
         autodiff_reverse,
         automatically_derived,
         available_externally,
+        avr,
         avx,
         avx10_target_feature,
         avx512_target_feature,
@@ -564,6 +587,7 @@ symbols! {
         begin_panic,
         bench,
         bevy_ecs,
+        bikeshed,
         bikeshed_guaranteed_no_drop,
         bin,
         binaryheap_iter,
@@ -574,10 +598,12 @@ symbols! {
         bitor,
         bitor_assign,
         bitreverse,
+        bits,
         bitxor,
         bitxor_assign,
         black_box,
         block,
+        blocking,
         bool,
         bool_then,
         borrowck_graphviz_format,
@@ -586,6 +612,7 @@ symbols! {
         box_patterns,
         box_syntax,
         boxed_slice,
+        bpf,
         bpf_target_feature,
         braced_empty_structs,
         branch,
@@ -604,12 +631,14 @@ symbols! {
         c_str_literals,
         c_unwind,
         c_variadic,
+        c_variadic_naked_functions,
         c_void,
         call,
         call_mut,
         call_once,
         call_once_future,
         call_ref_future,
+        caller,
         caller_location,
         capture_disjoint_fields,
         carrying_mul_add,
@@ -624,7 +653,7 @@ symbols! {
         cfg_accessible,
         cfg_attr,
         cfg_attr_multi,
-        cfg_attr_trace: "<cfg_attr>", // must not be a valid identifier
+        cfg_attr_trace: "<cfg_attr_trace>", // must not be a valid identifier
         cfg_boolean_literals,
         cfg_contract_checks,
         cfg_doctest,
@@ -645,7 +674,7 @@ symbols! {
         cfg_target_has_reliable_f16_f128,
         cfg_target_thread_local,
         cfg_target_vendor,
-        cfg_trace: "<cfg>", // must not be a valid identifier
+        cfg_trace: "<cfg_trace>", // must not be a valid identifier
         cfg_ub_checks,
         cfg_version,
         cfi,
@@ -694,7 +723,9 @@ symbols! {
         compile_error,
         compiler,
         compiler_builtins,
+        compiler_copy,
         compiler_fence,
+        compiler_move,
         concat,
         concat_bytes,
         concat_idents,
@@ -702,6 +733,7 @@ symbols! {
         console,
         const_allocate,
         const_async_blocks,
+        const_block_items,
         const_closures,
         const_compare_raw_pointers,
         const_constructor,
@@ -740,7 +772,6 @@ symbols! {
         const_raw_ptr_to_usize_cast,
         const_refs_to_cell,
         const_refs_to_static,
-        const_trait,
         const_trait_bound_opt_out,
         const_trait_impl,
         const_try,
@@ -790,6 +821,7 @@ symbols! {
         crate_type,
         crate_visibility_modifier,
         crt_dash_static: "crt-static",
+        csky,
         csky_target_feature,
         cstr_type,
         cstring_as_c_str,
@@ -865,6 +897,7 @@ symbols! {
         destructuring_assignment,
         diagnostic,
         diagnostic_namespace,
+        diagnostic_on_const,
         dialect,
         direct,
         discriminant_kind,
@@ -888,7 +921,6 @@ symbols! {
         doc_primitive,
         doc_spotlight,
         doctest,
-        document_private_items,
         dotdot: "..",
         dotdot_in_tuple_patterns,
         dotdoteq_in_patterns,
@@ -914,6 +946,12 @@ symbols! {
         effects,
         eh_catch_typeinfo,
         eh_personality,
+        eii,
+        eii_declaration,
+        eii_impl,
+        eii_internals,
+        eii_shared_macro,
+        element_ty,
         emit,
         emit_enum,
         emit_enum_variant,
@@ -973,6 +1011,7 @@ symbols! {
         extern_crate_item_prelude,
         extern_crate_self,
         extern_in_paths,
+        extern_item_impls,
         extern_prelude,
         extern_system_varargs,
         extern_types,
@@ -1085,10 +1124,7 @@ symbols! {
         format_args_nl,
         format_argument,
         format_arguments,
-        format_count,
         format_macro,
-        format_placeholder,
-        format_unsafe_arg,
         framework,
         freeze,
         freeze_impls,
@@ -1103,7 +1139,9 @@ symbols! {
         from_output,
         from_residual,
         from_size_align_unchecked,
+        from_str,
         from_str_method,
+        from_str_nonconst,
         from_u16,
         from_usize,
         from_yeet,
@@ -1156,6 +1194,7 @@ symbols! {
         hashset_drain_ty,
         hashset_iter,
         hashset_iter_ty,
+        hexagon,
         hexagon_target_feature,
         hidden,
         hide,
@@ -1248,6 +1287,7 @@ symbols! {
         into_async_iter_into_iter,
         into_future,
         into_iter,
+        into_try_type,
         intra_doc_pointers,
         intrinsics,
         intrinsics_unaligned_volatile_load,
@@ -1258,6 +1298,7 @@ symbols! {
         io_stdout,
         irrefutable_let_patterns,
         is,
+        is_auto,
         is_val_statically_known,
         isa_attribute,
         isize,
@@ -1342,11 +1383,14 @@ symbols! {
         logf32,
         logf64,
         logf128,
+        loongarch32,
+        loongarch64,
         loongarch_target_feature,
         loop_break_value,
         loop_match,
         lr,
         lt,
+        m68k,
         m68k_target_feature,
         macro_at_most_once_rep,
         macro_attr,
@@ -1387,11 +1431,13 @@ symbols! {
         maybe_uninit,
         maybe_uninit_uninit,
         maybe_uninit_zeroed,
+        mem_align_const,
         mem_align_of,
         mem_discriminant,
         mem_drop,
         mem_forget,
         mem_replace,
+        mem_size_const,
         mem_size_of,
         mem_size_of_val,
         mem_swap,
@@ -1420,6 +1466,10 @@ symbols! {
         minnumf32,
         minnumf64,
         minnumf128,
+        mips,
+        mips32r6,
+        mips64,
+        mips64r6,
         mips_target_feature,
         mir_assume,
         mir_basic_block,
@@ -1468,6 +1518,7 @@ symbols! {
         move_ref_pattern,
         move_size_limit,
         movrs_target_feature,
+        msp430,
         mul,
         mul_assign,
         mul_with_overflow,
@@ -1476,6 +1527,7 @@ symbols! {
         must_use,
         mut_preserve_binding_mode_2024,
         mut_ref,
+        mutable,
         naked,
         naked_asm,
         naked_functions,
@@ -1543,6 +1595,7 @@ symbols! {
         non_exhaustive_omitted_patterns_lint,
         non_lifetime_binders,
         non_modrs_mods,
+        nonblocking,
         none,
         nontemporal_store,
         noop_method_borrow,
@@ -1554,10 +1607,13 @@ symbols! {
         not,
         notable_trait,
         note,
+        null,
+        nvptx64,
         nvptx_target_feature,
         object_safe_for_dispatch,
         of,
         off,
+        offload,
         offset,
         offset_of,
         offset_of_enum,
@@ -1567,6 +1623,7 @@ symbols! {
         old_name,
         omit_gdb_pretty_printer_section,
         on,
+        on_const,
         on_unimplemented,
         opaque,
         opaque_module_name_placeholder: "<opaque>",
@@ -1664,6 +1721,7 @@ symbols! {
         pin,
         pin_ergonomics,
         pin_macro,
+        pin_v2,
         platform_intrinsics,
         plugin,
         plugin_registrar,
@@ -1678,6 +1736,8 @@ symbols! {
         post_cleanup: "post-cleanup",
         post_dash_lto: "post-lto",
         postfix_match,
+        powerpc,
+        powerpc64,
         powerpc_target_feature,
         powf16,
         powf32,
@@ -1692,6 +1752,7 @@ symbols! {
         precise_capturing_in_traits,
         precise_pointer_size_matching,
         precision,
+        predicates,
         pref_align_of,
         prefetch_read_data,
         prefetch_read_instruction,
@@ -1745,6 +1806,8 @@ symbols! {
         ptr_slice_from_raw_parts_mut,
         ptr_swap,
         ptr_swap_nonoverlapping,
+        ptr_without_provenance,
+        ptr_without_provenance_mut,
         ptr_write,
         ptr_write_bytes,
         ptr_write_unaligned,
@@ -1777,6 +1840,7 @@ symbols! {
         read_via_copy,
         readonly,
         realloc,
+        realtime,
         reason,
         reborrow,
         receiver,
@@ -1825,6 +1889,8 @@ symbols! {
         resume,
         return_position_impl_trait_in_trait,
         return_type_notation,
+        riscv32,
+        riscv64,
         riscv_target_feature,
         rlib,
         ropi,
@@ -1856,6 +1922,7 @@ symbols! {
         rust_future,
         rust_logo,
         rust_out,
+        rust_preserve_none_cc,
         rustc,
         rustc_abi,
         // FIXME(#82232, #143834): temporary name to mitigate `#[align]` nameres ambiguity
@@ -1890,7 +1957,6 @@ symbols! {
         rustc_diagnostic_macros,
         rustc_dirty,
         rustc_do_not_const_check,
-        rustc_do_not_implement_via_object,
         rustc_doc_primitive,
         rustc_driver,
         rustc_dummy,
@@ -1899,7 +1965,9 @@ symbols! {
         rustc_dump_predicates,
         rustc_dump_user_args,
         rustc_dump_vtable,
+        rustc_dyn_incompatible_trait,
         rustc_effective_visibility,
+        rustc_eii_foreign_item,
         rustc_evaluate_where_clauses,
         rustc_expected_cgu_reuse,
         rustc_force_inline,
@@ -1914,7 +1982,6 @@ symbols! {
         rustc_layout_scalar_valid_range_end,
         rustc_layout_scalar_valid_range_start,
         rustc_legacy_const_generics,
-        rustc_lint_diagnostics,
         rustc_lint_opt_deny_field_access,
         rustc_lint_opt_ty,
         rustc_lint_query_instability,
@@ -1928,17 +1995,20 @@ symbols! {
         rustc_no_implicit_autorefs,
         rustc_no_implicit_bounds,
         rustc_no_mir_inline,
+        rustc_non_const_trait_method,
         rustc_nonnull_optimization_guaranteed,
         rustc_nounwind,
         rustc_objc_class,
         rustc_objc_selector,
         rustc_object_lifetime_default,
+        rustc_offload_kernel,
         rustc_on_unimplemented,
         rustc_outlives,
         rustc_paren_sugar,
         rustc_partition_codegened,
         rustc_partition_reused,
         rustc_pass_by_value,
+        rustc_pass_indirectly_in_non_rustic_abis,
         rustc_peek,
         rustc_peek_liveness,
         rustc_peek_maybe_init,
@@ -1951,7 +2021,9 @@ symbols! {
         rustc_reallocator,
         rustc_regions,
         rustc_reservation_impl,
+        rustc_scalable_vector,
         rustc_serialize,
+        rustc_should_not_be_called_on_const_items,
         rustc_simd_monomorphize_lane_limit,
         rustc_skip_during_method_dispatch,
         rustc_specialization_trait,
@@ -1971,7 +2043,9 @@ symbols! {
         rvalue_static_promotion,
         rwpi,
         s,
+        s390x,
         s390x_target_feature,
+        s390x_target_feature_vector,
         safety,
         sanitize,
         sanitizer_cfi_generalize_pointers,
@@ -1986,7 +2060,6 @@ symbols! {
         self_in_typedefs,
         self_struct_ctor,
         semiopaque,
-        semitransparent,
         sha2,
         sha3,
         sha512_sm_x86,
@@ -2001,6 +2074,7 @@ symbols! {
         shr_assign,
         sig_dfl,
         sig_ign,
+        signed,
         simd,
         simd_add,
         simd_and,
@@ -2073,6 +2147,7 @@ symbols! {
         simd_shr,
         simd_shuffle,
         simd_shuffle_const_generic,
+        simd_splat,
         simd_sub,
         simd_trunc,
         simd_with_exposed_provenance,
@@ -2099,9 +2174,13 @@ symbols! {
         slice_patterns,
         slicing_syntax,
         soft,
+        sparc,
+        sparc64,
         sparc_target_feature,
+        spe_acc,
         specialization,
         speed,
+        spirv,
         spotlight,
         sqrtf16,
         sqrtf32,
@@ -2222,6 +2301,7 @@ symbols! {
         trace_macros,
         track_caller,
         trait_alias,
+        trait_ty,
         trait_upcasting,
         transmute,
         transmute_generic_consts,
@@ -2232,16 +2312,20 @@ symbols! {
         transparent_enums,
         transparent_unions,
         trivial_bounds,
+        trivial_clone,
         truncf16,
         truncf32,
         truncf64,
         truncf128,
         try_blocks,
+        try_blocks_heterogeneous,
         try_capture,
         try_from,
         try_from_fn,
         try_into,
         try_trait_v2,
+        try_trait_v2_residual,
+        try_update,
         tt,
         tuple,
         tuple_indexing,
@@ -2256,6 +2340,7 @@ symbols! {
         type_const,
         type_id,
         type_id_eq,
+        type_info,
         type_ir,
         type_ir_infer_ctxt_like,
         type_ir_inherent,
@@ -2263,6 +2348,7 @@ symbols! {
         type_length_limit,
         type_macros,
         type_name,
+        type_of,
         type_privacy_lints,
         typed_swap_nonoverlapping,
         u8,
@@ -2335,6 +2421,7 @@ symbols! {
         unsafe_block_in_unsafe_fn,
         unsafe_cell,
         unsafe_cell_raw_get,
+        unsafe_eii,
         unsafe_extern_blocks,
         unsafe_fields,
         unsafe_no_drop_flag,
@@ -2359,6 +2446,7 @@ symbols! {
         unwrap,
         unwrap_binder,
         unwrap_or,
+        update,
         use_cloned,
         use_extern_macros,
         use_nested_groups,
@@ -2410,11 +2498,15 @@ symbols! {
         volatile_store,
         vreg,
         vreg_low16,
+        vsreg,
         vsx,
         vtable_align,
+        vtable_for,
         vtable_size,
         warn,
         wasip2,
+        wasm32,
+        wasm64,
         wasm_abi,
         wasm_import_module,
         wasm_target_feature,
@@ -2441,12 +2533,15 @@ symbols! {
         write_str,
         write_via_move,
         writeln_macro,
+        x86,
+        x86_64,
         x86_amx_intrinsics,
         x87_reg,
         x87_target_feature,
         xer,
         xmm_reg,
         xop_target_feature,
+        xtensa,
         yeet_desugar_details,
         yeet_expr,
         yes,
@@ -2658,7 +2753,7 @@ impl fmt::Display for IdentPrinter {
     }
 }
 
-/// An newtype around `Ident` that calls [Ident::normalize_to_macro_rules] on
+/// A newtype around `Ident` that calls [Ident::normalize_to_macro_rules] on
 /// construction for "local variable hygiene" comparisons.
 ///
 /// Use this type when you need to compare identifiers according to macro_rules hygiene.
@@ -2682,48 +2777,6 @@ impl fmt::Debug for MacroRulesNormalizedIdent {
 impl fmt::Display for MacroRulesNormalizedIdent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(&self.0, f)
-    }
-}
-
-/// An newtype around `Ident` that calls [Ident::normalize_to_macros_2_0] on
-/// construction for "item hygiene" comparisons.
-///
-/// Identifiers with same string value become same if they came from the same macro 2.0 macro
-/// (e.g., `macro` item, but not `macro_rules` item) and stay different if they came from
-/// different macro 2.0 macros.
-#[derive(Copy, Clone, Eq, PartialEq, Hash)]
-pub struct Macros20NormalizedIdent(pub Ident);
-
-impl Macros20NormalizedIdent {
-    #[inline]
-    pub fn new(ident: Ident) -> Self {
-        Macros20NormalizedIdent(ident.normalize_to_macros_2_0())
-    }
-
-    // dummy_span does not need to be normalized, so we can use `Ident` directly
-    pub fn with_dummy_span(name: Symbol) -> Self {
-        Macros20NormalizedIdent(Ident::with_dummy_span(name))
-    }
-}
-
-impl fmt::Debug for Macros20NormalizedIdent {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(&self.0, f)
-    }
-}
-
-impl fmt::Display for Macros20NormalizedIdent {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.0, f)
-    }
-}
-
-/// By impl Deref, we can access the wrapped Ident as if it were a normal Ident
-/// such as `norm_ident.name` instead of `norm_ident.0.name`.
-impl Deref for Macros20NormalizedIdent {
-    type Target = Ident;
-    fn deref(&self) -> &Self::Target {
-        &self.0
     }
 }
 
@@ -2787,6 +2840,27 @@ impl Symbol {
     pub fn to_ident_string(self) -> String {
         // Avoid creating an empty identifier, because that asserts in debug builds.
         if self == sym::empty { String::new() } else { Ident::with_dummy_span(self).to_string() }
+    }
+
+    /// Checks if `self` is similar to any symbol in `candidates`.
+    ///
+    /// The returned boolean represents whether the candidate is the same symbol with a different
+    /// casing.
+    ///
+    /// All the candidates are assumed to be lowercase.
+    pub fn find_similar(
+        self,
+        candidates: &[Symbol],
+    ) -> Option<(Symbol, /* is incorrect case */ bool)> {
+        let lowercase = self.as_str().to_lowercase();
+        let lowercase_sym = Symbol::intern(&lowercase);
+        if candidates.contains(&lowercase_sym) {
+            Some((lowercase_sym, true))
+        } else if let Some(similar_sym) = find_best_match_for_name(candidates, self, None) {
+            Some((similar_sym, false))
+        } else {
+            None
+        }
     }
 }
 

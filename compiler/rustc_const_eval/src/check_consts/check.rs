@@ -1,11 +1,11 @@
 //! The `Visitor` responsible for actually checking a `mir::Body` for invalid operations.
 
-use std::assert_matches::assert_matches;
 use std::borrow::Cow;
 use std::mem;
 use std::num::NonZero;
 use std::ops::Deref;
 
+use rustc_data_structures::assert_matches;
 use rustc_errors::{Diag, ErrorGuaranteed};
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
@@ -251,7 +251,7 @@ impl<'mir, 'tcx> Checker<'mir, 'tcx> {
                 let mut transient = DenseBitSet::new_filled(ccx.body.local_decls.len());
                 // Make sure to only visit reachable blocks, the dataflow engine can ICE otherwise.
                 for (bb, data) in traversal::reachable(&ccx.body) {
-                    if matches!(data.terminator().kind, TerminatorKind::Return) {
+                    if data.terminator().kind == TerminatorKind::Return {
                         let location = ccx.body.terminator_loc(bb);
                         maybe_storage_live.seek_after_primary_effect(location);
                         // If a local may be live here, it is definitely not transient.
@@ -627,7 +627,7 @@ impl<'tcx> Visitor<'tcx> for Checker<'_, 'tcx> {
                     | PointerCoercion::ArrayToPointer
                     | PointerCoercion::UnsafeFnPointer
                     | PointerCoercion::ClosureFnPointer(_)
-                    | PointerCoercion::ReifyFnPointer,
+                    | PointerCoercion::ReifyFnPointer(_),
                     _,
                 ),
                 _,
@@ -645,14 +645,6 @@ impl<'tcx> Visitor<'tcx> for Checker<'_, 'tcx> {
 
             Rvalue::Cast(_, _, _) => {}
 
-            Rvalue::NullaryOp(
-                NullOp::SizeOf
-                | NullOp::AlignOf
-                | NullOp::OffsetOf(_)
-                | NullOp::UbChecks
-                | NullOp::ContractChecks,
-                _,
-            ) => {}
             Rvalue::ShallowInitBox(_, _) => {}
 
             Rvalue::UnaryOp(op, operand) => {
@@ -782,16 +774,16 @@ impl<'tcx> Visitor<'tcx> for Checker<'_, 'tcx> {
 
                 // Attempting to call a trait method?
                 if let Some(trait_did) = tcx.trait_of_assoc(callee) {
-                    // We can't determine the actual callee here, so we have to do different checks
-                    // than usual.
+                    // We can't determine the actual callee (the underlying impl of the trait) here, so we have
+                    // to do different checks than usual.
 
                     trace!("attempting to call a trait method");
-                    let trait_is_const = tcx.is_const_trait(trait_did);
+                    let is_const = tcx.constness(callee) == hir::Constness::Const;
 
                     // Only consider a trait to be const if the const conditions hold.
                     // Otherwise, it's really misleading to call something "conditionally"
                     // const when it's very obviously not conditionally const.
-                    if trait_is_const && has_const_conditions == Some(ConstConditionsHold::Yes) {
+                    if is_const && has_const_conditions == Some(ConstConditionsHold::Yes) {
                         // Trait calls are always conditionally-const.
                         self.check_op(ops::ConditionallyConstCall {
                             callee,
@@ -841,12 +833,13 @@ impl<'tcx> Visitor<'tcx> for Checker<'_, 'tcx> {
 
                 // const-eval of `panic_display` assumes the argument is `&&str`
                 if tcx.is_lang_item(callee, LangItem::PanicDisplay) {
-                    match args[0].node.ty(&self.ccx.body.local_decls, tcx).kind() {
-                        ty::Ref(_, ty, _) if matches!(ty.kind(), ty::Ref(_, ty, _) if ty.is_str()) =>
-                            {}
-                        _ => {
-                            self.check_op(ops::PanicNonStr);
-                        }
+                    if let ty::Ref(_, ty, _) =
+                        args[0].node.ty(&self.ccx.body.local_decls, tcx).kind()
+                        && let ty::Ref(_, ty, _) = ty.kind()
+                        && ty.is_str()
+                    {
+                    } else {
+                        self.check_op(ops::PanicNonStr);
                     }
                     // Allow this call, skip all the checks below.
                     return;
@@ -893,6 +886,15 @@ impl<'tcx> Visitor<'tcx> for Checker<'_, 'tcx> {
                             feature,
                             ..
                         }) => {
+                            // We only honor `span.allows_unstable` aka `#[allow_internal_unstable]`
+                            // if the callee is safe to expose, to avoid bypassing recursive stability.
+                            // This is not ideal since it means the user sees an error, not the macro
+                            // author, but that's also the case if one forgets to set
+                            // `#[allow_internal_unstable]` in the first place.
+                            if self.span.allows_unstable(feature) && is_const_stable {
+                                return;
+                            }
+
                             self.check_op(ops::IntrinsicUnstable {
                                 name: intrinsic.name,
                                 feature,

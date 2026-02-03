@@ -1,7 +1,7 @@
 use rustc_ast as ast;
 use rustc_ast::token::{self, MetaVarKind};
 use rustc_ast::tokenstream::ParserRange;
-use rustc_ast::{Attribute, attr};
+use rustc_ast::{AttrItemKind, Attribute, attr};
 use rustc_errors::codes::*;
 use rustc_errors::{Diag, PResult};
 use rustc_span::{BytePos, Span};
@@ -9,7 +9,8 @@ use thin_vec::ThinVec;
 use tracing::debug;
 
 use super::{
-    AttrWrapper, Capturing, FnParseMode, ForceCollect, Parser, PathStyle, Trailing, UsePreAttrPos,
+    AllowConstBlockItems, AttrWrapper, Capturing, FnParseMode, ForceCollect, Parser, PathStyle,
+    Trailing, UsePreAttrPos,
 };
 use crate::parser::FnContext;
 use crate::{errors, exp, fluent_generated as fluent};
@@ -201,8 +202,9 @@ impl<'a> Parser<'a> {
             AttrWrapper::empty(),
             true,
             false,
-            FnParseMode { req_name: |_| true, context: FnContext::Free, req_body: true },
+            FnParseMode { req_name: |_, _| true, context: FnContext::Free, req_body: true },
             ForceCollect::No,
+            AllowConstBlockItems::Yes,
         ) {
             Ok(Some(item)) => {
                 // FIXME(#100717)
@@ -313,7 +315,7 @@ impl<'a> Parser<'a> {
                 this.expect(exp!(CloseParen))?;
             }
             Ok((
-                ast::AttrItem { unsafety, path, args, tokens: None },
+                ast::AttrItem { unsafety, path, args: AttrItemKind::Unparsed(args), tokens: None },
                 Trailing::No,
                 UsePreAttrPos::No,
             ))
@@ -375,27 +377,6 @@ impl<'a> Parser<'a> {
         }
 
         Ok(lit)
-    }
-
-    /// Parses `cfg_attr(pred, attr_item_list)` where `attr_item_list` is comma-delimited.
-    pub fn parse_cfg_attr(
-        &mut self,
-    ) -> PResult<'a, (ast::MetaItemInner, Vec<(ast::AttrItem, Span)>)> {
-        let cfg_predicate = self.parse_meta_item_inner()?;
-        self.expect(exp!(Comma))?;
-
-        // Presumably, the majority of the time there will only be one attr.
-        let mut expanded_attrs = Vec::with_capacity(1);
-        while self.token != token::Eof {
-            let lo = self.token.span;
-            let item = self.parse_attr_item(ForceCollect::Yes)?;
-            expanded_attrs.push((item, lo.to(self.prev_token.span)));
-            if !self.eat(exp!(Comma)) {
-                break;
-            }
-        }
-
-        Ok((cfg_predicate, expanded_attrs))
     }
 
     /// Matches `COMMASEP(meta_item_inner)`.

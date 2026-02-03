@@ -10,7 +10,7 @@ use std::hash::Hash;
 use std::intrinsics;
 use std::marker::{DiscriminantKind, PointeeSized};
 
-use rustc_abi::{FieldIdx, VariantIdx};
+use rustc_abi::FieldIdx;
 use rustc_data_structures::fx::FxHashMap;
 use rustc_hir::def_id::LocalDefId;
 use rustc_serialize::{Decodable, Encodable};
@@ -427,11 +427,11 @@ impl<'tcx, D: TyDecoder<'tcx>> RefDecodable<'tcx, D> for [Spanned<MonoItem<'tcx>
     }
 }
 
-impl<'tcx, D: TyDecoder<'tcx>> RefDecodable<'tcx, D> for ty::List<ty::BoundVariableKind> {
+impl<'tcx, D: TyDecoder<'tcx>> RefDecodable<'tcx, D> for ty::List<ty::BoundVariableKind<'tcx>> {
     fn decode(decoder: &mut D) -> &'tcx Self {
         let len = decoder.read_usize();
         decoder.interner().mk_bound_variable_kinds_from_iter(
-            (0..len).map::<ty::BoundVariableKind, _>(|_| Decodable::decode(decoder)),
+            (0..len).map::<ty::BoundVariableKind<'tcx>, _>(|_| Decodable::decode(decoder)),
         )
     }
 }
@@ -489,22 +489,13 @@ impl<'tcx, D: TyDecoder<'tcx>> Decodable<D> for &'tcx ty::List<LocalDefId> {
     }
 }
 
-impl<'tcx, D: TyDecoder<'tcx>> RefDecodable<'tcx, D> for ty::List<(VariantIdx, FieldIdx)> {
-    fn decode(decoder: &mut D) -> &'tcx Self {
-        let len = decoder.read_usize();
-        decoder.interner().mk_offset_of_from_iter(
-            (0..len).map::<(VariantIdx, FieldIdx), _>(|_| Decodable::decode(decoder)),
-        )
-    }
-}
-
 impl_decodable_via_ref! {
     &'tcx ty::TypeckResults<'tcx>,
     &'tcx ty::List<Ty<'tcx>>,
     &'tcx ty::List<ty::PolyExistentialPredicate<'tcx>>,
     &'tcx traits::ImplSource<'tcx, ()>,
     &'tcx mir::Body<'tcx>,
-    &'tcx ty::List<ty::BoundVariableKind>,
+    &'tcx ty::List<ty::BoundVariableKind<'tcx>>,
     &'tcx ty::List<ty::Pattern<'tcx>>,
     &'tcx ty::ListWithCachedTypeInfo<ty::Clause<'tcx>>,
 }
@@ -577,7 +568,7 @@ impl_arena_copy_decoder! {<'tcx>
     rustc_span::def_id::DefId,
     rustc_span::def_id::LocalDefId,
     (rustc_middle::middle::exported_symbols::ExportedSymbol<'tcx>, rustc_middle::middle::exported_symbols::SymbolExportInfo),
-    ty::DeducedParamAttrs,
+    rustc_middle::middle::deduced_param_attrs::DeducedParamAttrs,
 }
 
 #[macro_export]

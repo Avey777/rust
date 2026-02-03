@@ -105,7 +105,7 @@ fn check_struct<'tcx>(
     if let TyKind::Path(QPath::Resolved(_, p)) = self_ty.kind
         && let Some(PathSegment { args, .. }) = p.segments.last()
     {
-        let args = args.map(|a| a.args).unwrap_or(&[]);
+        let args = args.map(|a| a.args).unwrap_or_default();
 
         // ty_args contains the generic parameters of the type declaration, while args contains the
         // arguments used at instantiation time. If both len are not equal, it means that some
@@ -232,6 +232,7 @@ impl<'tcx> LateLintPass<'tcx> for DerivableImpls {
             of_trait: Some(of_trait),
             items: [child],
             self_ty,
+            constness,
             ..
         }) = item.kind
             && !cx.tcx.is_automatically_derived(item.owner_id.to_def_id())
@@ -247,7 +248,7 @@ impl<'tcx> LateLintPass<'tcx> for DerivableImpls {
             && !attrs.iter().any(|attr| attr.doc_str().is_some())
             && cx.tcx.hir_attrs(impl_item_hir).is_empty()
         {
-            let is_const = of_trait.constness == hir::Constness::Const;
+            let is_const = constness == hir::Constness::Const;
             if adt_def.is_struct() {
                 check_struct(
                     cx,

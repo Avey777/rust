@@ -24,6 +24,19 @@ fn main() {
 
     loop {
         //~^ while_let_loop
+        let Some(_x) = y else { break };
+    }
+
+    loop {
+        // no error, else branch does something other than break
+        let Some(_x) = y else {
+            let _z = 1;
+            break;
+        };
+    }
+
+    loop {
+        //~^ while_let_loop
 
         match y {
             Some(_x) => true,
@@ -238,5 +251,26 @@ fn let_assign() {
         if x == 3 {
             break;
         }
+    }
+}
+
+fn issue16378() {
+    // This does not lint today because of the extra statement(s)
+    // before the `break`.
+    // TODO: When the `break` statement/expr in the `let`/`else` is the
+    // only way to leave the loop, the lint could trigger and move
+    // the statements preceeding the `break` after the loop, as in:
+    // ```rust
+    // while let Some(x) = std::hint::black_box(None::<i32>) {
+    //     println!("x = {x}");
+    // }
+    // println!("fail");
+    // ```
+    loop {
+        let Some(x) = std::hint::black_box(None::<i32>) else {
+            println!("fail");
+            break;
+        };
+        println!("x = {x}");
     }
 }

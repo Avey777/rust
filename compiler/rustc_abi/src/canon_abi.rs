@@ -27,6 +27,7 @@ pub enum CanonAbi {
     C,
     Rust,
     RustCold,
+    RustPreserveNone,
 
     /// An ABI that rustc does not know how to call or define.
     Custom,
@@ -51,6 +52,20 @@ pub enum CanonAbi {
     X86(X86Call),
 }
 
+impl CanonAbi {
+    pub fn is_rustic_abi(self) -> bool {
+        match self {
+            CanonAbi::Rust | CanonAbi::RustCold | CanonAbi::RustPreserveNone => true,
+            CanonAbi::C
+            | CanonAbi::Custom
+            | CanonAbi::Arm(_)
+            | CanonAbi::GpuKernel
+            | CanonAbi::Interrupt(_)
+            | CanonAbi::X86(_) => false,
+        }
+    }
+}
+
 impl fmt::Display for CanonAbi {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // convert to the ExternAbi that *shares a string* with this CanonAbi.
@@ -60,6 +75,7 @@ impl fmt::Display for CanonAbi {
             CanonAbi::C => ExternAbi::C { unwind: false },
             CanonAbi::Rust => ExternAbi::Rust,
             CanonAbi::RustCold => ExternAbi::RustCold,
+            CanonAbi::RustPreserveNone => ExternAbi::RustPreserveNone,
             CanonAbi::Custom => ExternAbi::Custom,
             CanonAbi::Arm(arm_call) => match arm_call {
                 ArmCall::Aapcs => ExternAbi::Aapcs { unwind: false },
